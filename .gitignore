@@ -1,0 +1,15 @@
+# secrets
+.env
+
+# model weights and data
+models/
+data/
+
+# python
+__pycache__/
+*.pyc
+*.onnx
+*.pt
+
+# calibration logs (raw measurement data, not source)
+eval/calibration/*.csv

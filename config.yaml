@@ -1,0 +1,30 @@
+# FireWatch configuration — every threshold, port, and path lives here.
+# No magic numbers in application code (info.md 3.1).
+#
+# Values marked "PLACEHOLDER — Day 6 calibration" are not real measurements.
+# They must be replaced after the MQ sensors complete 24-48h burn-in and the
+# calibration procedure in plan.md section 5.5 is run. Do not treat them as
+# valid thresholds until then (info.md section 8).
+
+vision:
+  model_path: models/fire_mnv3.onnx
+  input_size: 224                # MobileNetV3-Small expected input, plan.md 4.3
+  frame_threshold: 0.70           # tau — per-frame confidence threshold, plan.md 6.1 initial value
+  window: 8                       # M — rolling window size in frames (~1s at 8 FPS), plan.md 6.1 initial value
+  votes_needed: 5                 # N — votes required within window, plan.md 6.1 initial value
+
+sensors:
+  serial_port: "NOT SET"          # PLACEHOLDER — Day 6 calibration. Set from Arduino IDE, Tools -> Port
+  baud: 9600                      # plan.md 8, Day 6 prompt
+  mq2_warn: 300                   # PLACEHOLDER — Day 6 calibration. Formula: baseline + 0.30 * (peak - baseline), plan.md 5.5
+  mq2_danger: 600                 # PLACEHOLDER — Day 6 calibration. Formula: baseline + 0.60 * (peak - baseline), plan.md 5.5
+  mq135_warn: 300                 # PLACEHOLDER — Day 6 calibration. No MQ-135-specific formula given in plan.md; derive analogously to mq2 on Day 6
+  temp_rise_rate: 2.0             # PLACEHOLDER — Day 6 calibration. Degrees change over the 10-sample window that counts as "spiking", edge/sensors.py Day 6 prompt
+
+fusion:
+  cancel_window_seconds: 30       # owner has 30s to reply CANCEL before escalation, plan.md Day 9 prompt
+
+location:
+  latitude: 0.0                   # PLACEHOLDER — Day 6 calibration. Hardcoded coordinates, plan.md section 1 item 8 (GPS optional, will not lock indoors)
+  longitude: 0.0                  # PLACEHOLDER — Day 6 calibration. Hardcoded coordinates
+  address: "NOT SET"               # PLACEHOLDER — Day 6 calibration. Human-readable location for alert text
