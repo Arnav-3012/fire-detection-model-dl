@@ -140,7 +140,7 @@ fastapi
 uvicorn
 langgraph
 langchain-core
-anthropic
+groq
 boto3
 paho-mqtt
 streamlit
@@ -152,7 +152,7 @@ requests
 `.env` (gitignored):
 
 ```
-ANTHROPIC_API_KEY=
+GROQ_API_KEY=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 AWS_ACCESS_KEY_ID=
@@ -214,7 +214,7 @@ firewatch/
 | Model | MobileNetV3-Small, 3-class classifier | Tiny, fast on CPU, transfer-learns in minutes. **Not YOLO** — bounding boxes are out of scope |
 | Inference | ONNX Runtime | 3–5× faster than raw PyTorch on CPU. No GPU needed at demo time |
 | Agent | LangGraph | State machine with fixed edges. Guarantees "notify owner" can never be skipped |
-| LLM in agent | Claude via `anthropic` SDK | Message composition only. Never detection |
+| LLM in agent | Groq (llama-3.1-8b-instant) via `groq` SDK | Message composition only. Never detection |
 | Fire station lookup | OSM Overpass API | Free, no key, no signup |
 | Alerts | Telegram Bot API | Free, instant, sends images. Twilio trial is restrictive |
 | Cloud | AWS S3 (+ IoT Core if time) | Free tier, ~20 lines of boto3 |
@@ -606,8 +606,9 @@ and after wait (END if cancelled). Stub the node bodies for now.
 ```
 Fill in the remaining nodes in agent/graph.py.
 
-compose: call Claude via the anthropic SDK to turn the structured
-incident state into a 2-sentence human-readable alert. Include a
+compose: call Groq via the groq SDK, using the llama-3.1-8b-instant
+model, to turn the structured incident state into a 2-sentence
+human-readable alert. Include a
 deterministic template fallback if the API call fails — the alert
 must go out even if the LLM does not respond.
 

@@ -70,7 +70,7 @@ not wrap the local alarm in a network-dependent branch, do not "optimise" it.
 ### 2.3 The LLM never decides whether there is a fire
 
 - Detection is deterministic: model output → threshold → temporal vote → fusion table.
-- The LLM (Claude via the anthropic SDK) is permitted in exactly one place:
+- The LLM (Groq, llama-3.1-8b-instant) is permitted in exactly one place:
   composing human-readable alert text in the `compose` node.
 - The LLM must never gate escalation, never evaluate sensor readings, never be asked
   "is this a fire".
@@ -115,7 +115,7 @@ not wrap the local alarm in a network-dependent branch, do not "optimise" it.
 | S3 upload | Log warning, write to local fallback directory, continue |
 | Telegram | Log warning, retry once, continue |
 | Overpass API | Return a graceful fallback dict, continue |
-| Anthropic API | Fall back to the deterministic message template, continue |
+| Groq API | Fall back to the deterministic message template, continue |
 
 **Rule: nothing in the cloud or network layer may crash or block the edge loop.**
 

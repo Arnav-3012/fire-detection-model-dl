@@ -10,7 +10,7 @@ fastapi
 uvicorn
 langgraph
 langchain-core
-anthropic
+groq
 boto3
 paho-mqtt
 streamlit
