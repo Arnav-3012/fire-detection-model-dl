@@ -269,9 +269,6 @@ firewatch/
 | MQ-135 | VCC | 5V | another ~150mA |
 | | GND | GND | |
 | | A0 | **A1** | |
-| DHT22 | VCC (pin 1) | 5V | |
-| | DATA (pin 2) | **D2** | **10kΩ pull-up from DATA to 5V** |
-| | GND (pin 4) | GND | pin 3 unused |
 | Active buzzer | + | **D8** | |
 | | − | GND | |
 | Red LED | anode (long leg) | **D9** via 220Ω | |
@@ -284,6 +281,8 @@ firewatch/
 | | RX | **D3** | SoftwareSerial |
 | Arduino | USB-B | laptop USB | power + serial |
 | Webcam | USB | laptop USB | |
+
+DHT22 cut (cost + availability) — see logs.md for the open fusion-rule item this creates, to be resolved before Day 7.
 
 ### 5.3 Build order
 
