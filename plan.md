@@ -391,6 +391,8 @@ Public datasets contain almost no tricky negatives. This is exactly why student 
 
 **Decision on stove flame:** label it `fire`. Let the **fusion layer** resolve whether it is a hazard, not the vision model. Keep each component doing one job.
 
+6 of 7 categories automated via DuckDuckGo image search, see scripts/fetch_hard_negatives.py. TV/laptop fire footage category requires manual screenshot collection.
+
 ### 6.5 Test videos
 
 | Source | Purpose |
