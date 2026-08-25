@@ -9,7 +9,8 @@
 vision:
   model_path: models/fire_mnv3.onnx
   input_size: 224                # MobileNetV3-Small expected input, plan.md 4.3
-  frame_threshold: 0.70           # tau — per-frame confidence threshold, plan.md 6.1 initial value
+  fire_decision_threshold: 0.30   # probability threshold for the model to call a single frame "fire" (P(fire) >= this), eval/threshold_sweep.py, logs.md Phase 2. NOT the same as frame_threshold/tau below — that is the Day 4 temporal voter's separate later-stage threshold on top of this one.
+  frame_threshold: 0.70           # tau — per-frame confidence threshold for the Day 4 TemporalVoter (edge/vision.py, not yet written), plan.md 6.1 initial value. Distinct from fire_decision_threshold above.
   window: 8                       # M — rolling window size in frames (~1s at 8 FPS), plan.md 6.1 initial value
   votes_needed: 5                 # N — votes required within window, plan.md 6.1 initial value
 

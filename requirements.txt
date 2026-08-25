@@ -21,3 +21,4 @@ ddgs
 kaggle
 matplotlib
 pillow
+onnxscript

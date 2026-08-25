@@ -1,0 +1,104 @@
+{
+  "agent/__init__.py": {
+    "mtime": 1786996721.2960522,
+    "seen": 1787031500.950411,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "cloud/__init__.py": {
+    "mtime": 1786996721.2960918,
+    "seen": 1787031500.950412,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "dashboard/__init__.py": {
+    "mtime": 1786996721.296134,
+    "seen": 1787031500.950412,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "edge/__init__.py": {
+    "mtime": 1786996721.2960072,
+    "seen": 1787031500.950413,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "eval/__init__.py": {
+    "mtime": 1786996721.2961736,
+    "seen": 1787031500.950413,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "train/__init__.py": {
+    "mtime": 1786996721.2959406,
+    "seen": 1787031500.9504151,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "config.yaml": {
+    "mtime": 1786996737.8958,
+    "seen": 1787031500.9504151,
+    "ast_hash": "29c29ea7a8bfc7568b645d4416efba6d",
+    "semantic_hash": "29c29ea7a8bfc7568b645d4416efba6d"
+  },
+  "info.md": {
+    "mtime": 1787028886.9798489,
+    "seen": 1787031500.9504158,
+    "ast_hash": "ff1821946bd7705b9fa549736d674530",
+    "semantic_hash": "ff1821946bd7705b9fa549736d674530"
+  },
+  "logs.md": {
+    "mtime": 1787029725.079658,
+    "seen": 1787031500.9504158,
+    "ast_hash": "1533765810ff89212ec4afac5c5a7e7f",
+    "semantic_hash": "1533765810ff89212ec4afac5c5a7e7f"
+  },
+  "plan.md": {
+    "mtime": 1787028881.0603008,
+    "seen": 1787031500.9504168,
+    "ast_hash": "5dc21e651ea0f43eb43acede65f96f0b",
+    "semantic_hash": "5dc21e651ea0f43eb43acede65f96f0b"
+  },
+  "requirements.txt": {
+    "mtime": 1787028894.4690998,
+    "seen": 1787031500.9504168,
+    "ast_hash": "2a18fa86ef58e29ab2a9da823731b8d7",
+    "semantic_hash": "2a18fa86ef58e29ab2a9da823731b8d7"
+  },
+  ".vscode/settings.json": {
+    "mtime": 1787029644.9747486,
+    "seen": 1787031500.950409,
+    "ast_hash": "da5dd46cc9015eadbd3b6e5e2af45682",
+    "semantic_hash": "da5dd46cc9015eadbd3b6e5e2af45682"
+  },
+  "scripts/test_camera.py": {
+    "mtime": 1787029538.528201,
+    "seen": 1787031500.950413,
+    "ast_hash": "500fe652ed49776d9de6fd1f7f602cbd",
+    "semantic_hash": "500fe652ed49776d9de6fd1f7f602cbd"
+  },
+  "scripts/verify_env.py": {
+    "mtime": 1787029146.0287745,
+    "seen": 1787031500.9504142,
+    "ast_hash": "b1fc0d73bd2a7cea8e595b8fdf766caa",
+    "semantic_hash": "b1fc0d73bd2a7cea8e595b8fdf766caa"
+  },
+  "setup.ps1": {
+    "mtime": 1787029267.9966805,
+    "seen": 1787031500.9504142,
+    "ast_hash": "8a34f1b0038823904b0894d4acc55f1f",
+    "semantic_hash": "8a34f1b0038823904b0894d4acc55f1f"
+  },
+  "setup.sh": {
+    "mtime": 1787029124.4129286,
+    "seen": 1787031500.9504151,
+    "ast_hash": "39bdd6cdc6720ce24c2650a80ff9b59e",
+    "semantic_hash": "39bdd6cdc6720ce24c2650a80ff9b59e"
+  },
+  "context.md": {
+    "mtime": 1787029736.974718,
+    "seen": 1787031500.9504158,
+    "ast_hash": "3ab268223441eba7d52604705ea708a9",
+    "semantic_hash": "3ab268223441eba7d52604705ea708a9"
+  }
+}

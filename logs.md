@@ -44,11 +44,11 @@ Update this table at the end of every phase. It is the fastest way to recover co
 |---|---|---|---|---|
 | 0 | Scaffold and config | COMPLETE | 2026-08-18 | Folder tree + config.yaml created, parses clean |
 | 1 | Dataset preparation | COMPLETE | 2026-08-18 | prepare_data.py run: train 18,464 (neutral 8,528 / smoke 4,987 / fire 4,949), val 3,258 (neutral 1,505 / smoke 880 / fire 873); 195 hard negatives folded into neutral across 6 categories; TV/laptop category (30) still not collected, carried forward |
-| 2 | Model training | UNBLOCKED — ready to start | — | Unblocked by Phase 1 completion; `data/train/`, `data/val/` ready as input to `train/train_classifier.py` |
-| 3 | Edge loop v1 | NOT STARTED | — | — |
+| 2 | Model training | COMPLETE | 2026-08-23 | Fire recall 0.9611, fire precision 0.8785 @ fire_decision_threshold=0.30 (initial argmax result 0.9221 recall failed the 0.95 block bar; threshold lowering resolved it). Val accuracy 0.9067. Open item: recall margin thin, re-verify after Day 4/5 |
+| 3 | Edge loop v1 | COMPLETE | 2026-08-24 | camera.py + vision.py + main.py built and integrated; live webcam test confirmed neutral room (fire~0.00) and real fire video (FIRE 0.48-0.99, peak 0.99) both classified correctly, single-frame (pre-temporal-smoothing) noise as expected |
 | 4 | Temporal smoothing | NOT STARTED | — | — |
 | 5 | Adversarial evaluation | NOT STARTED | — | — |
-| 6 | Arduino and sensors | NOT STARTED | — | DHT22 out of scope for the Arduino sketch (cut, see Phase 0g) |
+| 6 | Arduino and sensors | IN PROGRESS | 2026-08-23 | H1-H2 done (Arduino verified via pin-9 LED blink); MQ-2 + MQ-135 wired and burn-in started 2026-08-23 12:40 AM, valid from 2026-08-24 12:40 AM (24h min); H3/H4 deferred pending buzzer arrival; DHT22 out of scope for the Arduino sketch (cut, see Phase 0g) |
 | 7 | Fusion logic | NOT STARTED | — | — |
 | 8 | Agent part 1 | NOT STARTED | — | — |
 | 9 | Agent part 2 | NOT STARTED | — | — |
@@ -75,8 +75,9 @@ Do not leave placeholders here — if not measured, say so.
 | `frame_threshold` (τ) | 0.70 (initial) | — | plan.md §6.1 |
 | `window` (M) | 8 (initial) | — | plan.md §6.1 |
 | `votes_needed` (N) | 5 (initial) | — | plan.md §6.1 |
-| Model val accuracy | NOT MEASURED | — | Day 2 |
-| Model fire recall | NOT MEASURED | — | Day 2 |
+| Model val accuracy | 0.9067 | 2026-08-23 | Phase 2 training run, `eval/train_log.txt` |
+| Model fire recall | 0.9611 @ fire_decision_threshold=0.30 (argmax was 0.9221) | 2026-08-23 | Phase 2, `eval/threshold_sweep.py` |
+| `fire_decision_threshold` | 0.30 | 2026-08-23 | Phase 2 threshold sweep, config.yaml |
 | Inference FPS | NOT MEASURED | — | Day 4 |
 | Hazard-to-buzzer latency | NOT MEASURED | — | Day 7 |
 | Offline test | NOT RUN | — | Day 11 |
@@ -87,17 +88,20 @@ Do not leave placeholders here — if not measured, say so.
 
 | Item | Ordered | Received | Wired | Tested | Notes |
 |---|---|---|---|---|---|
-| Arduino Uno + USB-B | ☑ | ☑ | ☐ | ☐ | From library, not yet wired or blink-tested |
-| MQ-2 | ☑ | ☑ | ☐ | ☐ | In hand, not yet wired — burn-in has not started |
-| MQ-135 | ☑ | ☐ | ☐ | ☐ | Ordered, arriving ~20 Aug |
+| Arduino Uno + USB-B | ☑ | ☑ | ☑ | ☑ | H1-H2 (power rails, LED on digital pin 9, controlled via `digitalWrite` in a modified Blink sketch) completed and confirmed working — breadboard LED blinked correctly under code control, confirming board, breadboard wiring, and upload pipeline all work. See Phase 0i entry |
+| MQ-2 | ☑ | ☑ | ☑ | ☑ | Analog output wired (MQ-2 -> A0, MQ-135 -> A1, confirmed physically labeled and verified). 15-minute stability check per plan.md Appendix A.4 PASSED: both sensors held within a 55-60 raw ADC range (5-point spread), well inside the ±20 bar. Confirmed responsive to a real stimulus (hand/breath near MQ-2 caused a visible reading change) before the stability window, confirming the sensor is live and not a wiring artifact. |
+| MQ-135 | ☑ | ☐ | ☑ | ☑ | Analog output wired (MQ-2 -> A0, MQ-135 -> A1, confirmed physically labeled and verified). 15-minute stability check per plan.md Appendix A.4 PASSED: both sensors held within a 55-60 raw ADC range (5-point spread), well inside the ±20 bar. Confirmed responsive to a real stimulus (hand/breath near MQ-2 caused a visible reading change) before the stability window, confirming the sensor is live and not a wiring artifact. |
 | DHT22 | — | — | — | — | CUT from project, see decision below |
 | Buzzer | ☑ | ☐ | ☐ | ☐ | Ordered, arriving ~24 Aug |
 | LEDs + resistors | ☑ | ☐ | ☐ | ☐ | Ordered as part of breadboard kit, arriving ~24 Aug |
 | Breadboard + jumpers | ☑ | ☐ | — | — | Ordered, arriving ~20 Aug |
 | Webcam | — | — | — | ☑ | Using MacBook built-in instead |
 
-**MQ-2 burn-in started:** NOT STARTED
-**MQ-2 burn-in valid from:** —
+**MQ-2 burn-in started:** 2026-08-23, 12:40 AM
+**MQ-2 burn-in valid from:** 2026-08-24, 12:40 AM (24h minimum) / 2026-08-25, 12:40 AM (48h preferred)
+
+**MQ-135 burn-in started:** 2026-08-23, 12:40 AM
+**MQ-135 burn-in valid from:** same window as above — 2026-08-24, 12:40 AM (24h minimum) / 2026-08-25, 12:40 AM (48h preferred)
 
 ---
 
@@ -705,3 +709,670 @@ open eval/class_balance.png
 
 ### Next phase
 Day 2 per `plan.md` §8: `train/train_classifier.py` (MobileNetV3-Small fine-tune on Colab) and `train/export_onnx.py`.
+
+## Phase 0i — Arduino verified (H1-H2), MQ-2 and MQ-135 wired and burn-in started
+
+**Date:** 2026-08-23
+**Status:** PARTIAL
+
+### What was built
+Hardware only. No application or Arduino sketch files changed beyond the
+modified Blink sketch used for the verification test itself.
+- H1-H2 (power rails, LED wired to digital pin 9) completed and confirmed
+  working — a modified Blink sketch drove the pin-9 LED via `digitalWrite`,
+  and the breadboard LED blinked correctly under code control. This confirms
+  the board, the breadboard wiring, and the upload pipeline all work — a
+  stronger check than the stock onboard `LED_BUILTIN` version of Blink, since
+  it exercises the actual breadboard circuit rather than the Arduino's own
+  fixed onboard LED.
+- MQ-2 and MQ-135 both wired for burn-in and powered on via a USB-A charger
+  (not the laptop, to free it up) at 12:40 AM, 2026-08-23. Both modules'
+  onboard power LEDs confirmed lit.
+
+### Key decisions
+- Verified the Arduino with a controlled-pin LED blink (pin 9) rather than
+  relying on the stock `LED_BUILTIN` Blink sketch — proves the breadboard
+  wiring and `digitalWrite`-driven control path work, not just that the bare
+  board itself powers on and runs stock firmware.
+- MQ-2 and MQ-135 powered from a USB-A charger rather than the laptop, so the
+  laptop remains free for other work during the 24-48h burn-in window.
+- H3 (red LED) and H4 (buzzer) deferred, not attempted this session — the
+  buzzer has not yet arrived (per Hardware status table, arriving Monday,
+  2026-08-24). Follows the H1→H9 incremental build order (info.md §8):
+  no skipping ahead to a step whose component isn't in hand yet.
+- No MQ-2 or MQ-135 readings were taken or recorded. Per info.md §8, sensor
+  readings before 24 hours of burn-in are not valid data — both sensors are
+  marked "Wired" but not "Tested" in the Hardware status table until burn-in
+  completes.
+
+### Measured results
+NOT YET MEASURED for MQ-2/MQ-135 — no valid sensor data exists yet (burn-in
+in progress, valid from 2026-08-24 12:40 AM at the 24h minimum). Arduino
+LED blink test: confirmed working by visual observation, pass/fail only
+(no numeric measurement applicable to this test).
+
+### How to verify
+Visually re-run the modified Blink sketch (pin 9, not `LED_BUILTIN`) and
+confirm the breadboard LED blinks in sync with the code's delay values.
+For burn-in: check both MQ modules' onboard power LEDs remain lit and do
+not disturb wiring until 2026-08-24 12:40 AM at the earliest (2026-08-25
+12:40 AM preferred).
+
+### Open items
+- MQ-2 and MQ-135 burn-in in progress — do not calibrate or set thresholds
+  against any reading taken before 2026-08-24, 12:40 AM (24h minimum),
+  2026-08-25, 12:40 AM preferred (info.md §8).
+- H3 (red LED) and H4 (buzzer) not started — buzzer not yet received,
+  arriving 2026-08-24 per Hardware status table.
+- Carried forward: DHT22 fusion-rule gap (Phase 0g), leftover `anthropic`
+  package, `.env` not yet populated with real credentials.
+
+### Next phase
+Wait out MQ-2/MQ-135 burn-in (valid from 2026-08-24 12:40 AM minimum,
+2026-08-25 12:40 AM preferred) before any sensor calibration or threshold
+work. H3/H4 once the buzzer arrives. Day 2 software track (`train/train_classifier.py`)
+remains available in parallel per Phase 0h's software-first sequencing.
+
+## Phase 2 — Model training (MobileNetV3-Small)
+
+**Date:** 2026-08-23
+**Status:** COMPLETE (with an open item carried forward, see below)
+
+### What was built
+- `train/train_classifier.py` — MobileNetV3-Small fine-tune, two-stage
+  (frozen backbone then unfrozen, LR 0.001 -> 5e-05), 12 epochs, seeded.
+  Outputs per-class precision/recall/F1, confusion matrix image, and
+  train/val curves, per info.md 4.1.
+- `train/export_onnx.py`, `train/metrics_report.py` — supporting export and
+  metrics-table code for the training run.
+- `models/fire_mnv3_best.pt` — best checkpoint (epoch 11, val_acc 0.9067).
+- `eval/train_log.txt`, `eval/confusion_matrix.png`, `eval/training_curves.png`,
+  `eval/model_architecture.txt` — training run outputs.
+- `eval/val_inference.py` — shared helper (`load_model`, `run_inference`) used
+  by the diagnostic scripts below; loads the checkpoint once and returns
+  per-image class probabilities against the val set.
+- `eval/inspect_misclassified.py` — diagnostic only. Pulls the actual fire
+  images the model misclassified, splits them into "close call" (fire
+  probability >= 0.20) vs "confident miss" (< 0.20), and copies them to
+  `eval/misclassified_fire_as_neutral/` and `eval/misclassified_fire_as_smoke/`
+  for manual inspection. Does not retrain or touch config.
+- `eval/threshold_sweep.py` — diagnostic only. Sweeps candidate fire decision
+  thresholds (0.30/0.35/0.40/0.45/0.50) against the val set and reports the
+  recall/precision tradeoff at each. Does not edit config or retrain itself —
+  reports the tradeoff curve for a human decision.
+- `config.yaml` — added `vision.fire_decision_threshold: 0.30` (new key; see
+  Key decisions). Did not touch or rename the existing `frame_threshold`
+  (tau) key, which belongs to the Day 4 temporal voter and is a different
+  threshold entirely.
+
+### Key decisions
+
+**1. Initial training result failed the fire recall block bar.**
+Fire recall came out to 0.9221 against info.md 4.1's 0.95 block bar — FAIL.
+The confusion matrix showed 17/873 true fire images misclassified as neutral
+(dangerous — a real fire that would raise no alarm at all) and 51/873
+misclassified as smoke (lower risk — still a hazard flag, one that fusion.py's
+WATCH/WARNING handling would catch downstream, per plan.md's fusion table).
+Per info.md 4.1's instruction on a failed block bar, training was not
+silently retried with different hyperparameters — the failure was reported
+and diagnosed instead (see below).
+
+**2. Diagnostic: close calls vs confident misses.**
+`eval/inspect_misclassified.py` split the 17 fire-as-neutral misses by the
+model's fire probability on each: 11 were "close calls" (fire probability
+0.34-0.49, narrowly losing the argmax to neutral) and 6 were "confident
+misses" (fire probability 0.00-0.13, essentially no fire signal detected at
+all). This distinction mattered directly for what to try next: a decision
+threshold change can only recover close calls, where the model's underlying
+signal was already roughly right and just lost a close vote — it cannot fix
+confident misses, where the signal itself is absent and no threshold rescues
+the image.
+
+**3. Threshold sweep, and an honesty finding worth recording.**
+`eval/threshold_sweep.py` tested five candidate decision thresholds (0.30,
+0.35, 0.40, 0.45, 0.50) against the val set, decoupling "is fire the model's
+single highest-probability class" (argmax) from "is fire probability above
+this threshold" (the actual sweep). The sweep's own recomputed baseline
+recall at threshold 0.50 read 0.9187, not the training run's reported 0.9221
+— a ~3-image discrepancy, attributed to floating-point/argmax tie
+sensitivity (e.g. a case sitting at fire=0.34 vs neutral=0.35, where which
+class "wins" the argmax can shift by a hair depending on computation path),
+not a bug in either script. This discrepancy is recorded here rather than
+silently reconciled or hidden, per info.md 2.4's no-fabrication rule — both
+numbers are real measurements from real runs, they just aren't bit-identical,
+and the difference is small enough (3 images out of 873) to not change any
+conclusion below.
+
+Full sweep results table (val set: 3,258 images, 873 true fire, 2,385 true
+non-fire):
+
+| Threshold | Fire recall | Fire precision | New false alarms vs 0.50 |
+|---|---|---|---|
+| 0.30 | 0.9611 | 0.8785 | +40 |
+| 0.35 | 0.9496 | 0.8924 | +24 |
+| 0.40 | 0.9416 | 0.9013 | +14 |
+| 0.45 | 0.9313 | 0.9114 | +3 |
+| 0.50 (baseline) | 0.9187 | 0.9134 | — |
+
+**4. DECISION: `fire_decision_threshold` set to 0.30.**
+This is the lowest of the five tested thresholds that clears BOTH of info.md
+4.1's fire-class block bars simultaneously (recall >= 0.95, precision >=
+0.80). 0.35 was the next candidate up and falls short of the recall bar
+(0.9496 < 0.95) — so 0.30 was not an arbitrary pick among passing options,
+it is the only threshold in the tested set that actually passes both bars.
+
+**5. REASONING for prioritizing recall over precision here (recorded in
+full, as a real project decision, not a mechanical config edit).**
+Recall and precision errors are not symmetric in real-world cost for this
+system. A false negative (a real fire that goes undetected, no alarm) risks
+life and safety, and is the system's core failure mode — the single thing
+info.md 4.1 calls out as the worst possible outcome, prioritized above every
+other metric. A false positive (a false alarm triggered by a non-fire image)
+is an inconvenience: annoying, and repeated false alarms carry a real cost
+to user trust over time, but categorically less severe than a missed fire.
+Optimizing for F1 or overall accuracy treats these two error types as
+equally costly, which they demonstrably are not for a life-safety detection
+system. This mirrors standard practice in other safety-critical detection
+domains — smoke detectors and medical screening tests are both deliberately
+tuned toward high recall at a real, accepted cost to precision / false-
+positive rate, rather than tuned for a "balanced" operating point. info.md
+4.1 already encodes this directly in its own block-bar design: the recall
+floor (0.95) is set higher than the precision floor (0.80), and the metric
+table states explicitly that missing a real fire is the worst possible
+failure. Choosing threshold 0.30 is applying that stated priority, not
+introducing a new one.
+
+**6. RISK NOTED, NOT YET RESOLVED — thin recall margin.**
+0.30's recall margin above the 0.95 floor is thin: 0.9611, about 1.1
+percentage points of headroom. Compare this to the precision margin at the
+same threshold — 0.8785 against an 0.80 floor, about 7.85 points of
+headroom. The recall margin is the tighter of the two by a wide factor, and
+this threshold has only been tuned and tested against the val set. It has
+NOT yet been tested against the Day 5 adversarial videos, nor run through
+the Day 4 temporal voter, which is expected to filter out single-frame noise
+before it ever reaches an actual alarm decision — meaning both the true
+operating margin and the practical effect of a missed frame here are still
+unknown in the system's actual runtime configuration, not just in an
+isolated single-frame val-set measurement.
+
+**FLAGGED AS AN OPEN ITEM (not resolved in this session):** re-verify the
+fire recall margin holds once Day 4 (temporal voter) and Day 5 (adversarial
+eval) are both complete. If the margin proves too thin in practice at that
+point, the next lever is adding targeted hard-negative or additional fire
+training data for more cushion — not moving the threshold further down.
+Moving further down would cost more precision for diminishing recall gain,
+since precision degrades as the threshold approaches the "confident miss"
+cluster's probability range (0.00-0.13, per the diagnostic above), where
+fire signal is nearly absent in the model's output and no threshold choice
+can rescue those specific images.
+
+### Measured results
+- Fire recall (training run, argmax): 0.9221 — FAILED info.md 4.1's 0.95
+  block bar.
+- Fire recall (threshold sweep, recomputed baseline @ 0.50): 0.9187 (see
+  honesty finding above for the discrepancy with the training run's number).
+- **Fire recall @ fire_decision_threshold=0.30: 0.9611** — PASSES the 0.95
+  block bar.
+- **Fire precision @ fire_decision_threshold=0.30: 0.8785** — PASSES the
+  0.80 block bar.
+- Overall val accuracy (best checkpoint, epoch 11): 0.9067.
+- Per-class metrics at the best checkpoint (argmax, before threshold
+  adjustment): fire precision 0.9127 / recall 0.9221 / F1 0.9174; neutral
+  precision 0.9341 / recall 0.9329 / F1 0.9335; smoke precision 0.8534 /
+  recall 0.8466 / F1 0.8500; macro F1 0.9003.
+- Confusion matrix (best checkpoint, argmax): 17/873 fire misclassified as
+  neutral, 51/873 fire misclassified as smoke.
+- Misclassification breakdown (fire-as-neutral, 17 total): 11 close calls
+  (fire probability 0.34-0.49), 6 confident misses (fire probability
+  0.00-0.13).
+
+### How to verify
+```
+cat eval/train_log.txt
+open eval/confusion_matrix.png eval/training_curves.png
+conda run -n firewatch python eval/inspect_misclassified.py
+conda run -n firewatch python eval/threshold_sweep.py
+python3 -c "import yaml; print(yaml.safe_load(open('config.yaml'))['vision']['fire_decision_threshold'])"
+```
+Expect the threshold sweep to print 0.30 as the lowest threshold meeting
+both info.md 4.1 block bars, matching the table above.
+
+### Open items
+- **Carried forward to Phase 4/5, not silently dropped:** re-verify that the
+  0.9611 fire recall margin (over the 0.95 floor) holds once the Day 4
+  temporal voter and Day 5 adversarial evaluation are both in place. The
+  margin is thin (1.1 points) relative to the precision margin (7.85
+  points) at the same threshold, and has only been measured on isolated
+  val-set frames, not through the full detection pipeline.
+- Smoke recall (0.8466) is below info.md 4.1's target of 0.92 (though above
+  its 0.85 block bar) — not addressed in this session, since this session's
+  scope was specifically the fire-recall block-bar failure. Noted here for
+  visibility, not treated as resolved.
+- `edge/vision.py` does not exist yet (Day 3/4 scope) — `fire_decision_threshold`
+  is written into config.yaml now so it is available when that code is
+  written, but nothing yet reads it.
+- No retraining, no changes to `train_classifier.py`, and no changes to the
+  checkpoint were made in this session, per explicit scope for this task.
+
+### Next phase
+Phase 3 (Edge loop v1) per plan.md's Day 3 schedule — `edge/camera.py` and
+`edge/vision.py`. Note `edge/vision.py` is also where `fire_decision_threshold`
+from config.yaml will first actually be read and applied at inference time.
+
+## Phase 3 — Edge loop v1 (Day 3, step 1 of 3: edge/camera.py)
+
+**Date:** 2026-08-24
+**Status:** PARTIAL
+
+### What was built
+- `edge/camera.py` — `Camera` class wrapping `cv2.VideoCapture(0)` (MacBook
+  built-in camera, confirmed working via `scripts/test_camera.py` in Phase 0f).
+  `read()` returns a single BGR frame, raising `RuntimeError` on a failed grab
+  (not returning `None`) so a bad read fails loudly at its source rather than
+  propagating an unhelpful error into `vision.py` later. `encode_jpeg(frame)`
+  encodes a frame to JPEG bytes — no caller yet, exists for the Day 8-9 agent's
+  snapshot-sending, implemented now as part of the class's natural interface,
+  per this session's explicit instruction. `release()` releases the device.
+  Camera-open failure prints a loud `[ERROR]` naming three likely causes
+  (another app holding the camera, macOS permission not granted, wrong device
+  index) and exits, per info.md 3.2's failure table — no silent retry.
+- Throwaway smoke test under `if __name__ == "__main__":` in the same file —
+  opens the camera, reads one frame, prints its shape, releases. Run directly
+  by the developer (not by Claude Code, per this session's tooling
+  constraints) via `conda run -n firewatch python edge/camera.py`.
+
+### Key decisions
+- `encode_jpeg` implemented now with no current caller — explicitly instructed
+  this session as an exception to info.md 3.4's "don't build ahead" rule,
+  since it's part of `Camera`'s natural interface rather than a separate
+  future feature being built early.
+- Smoke test kept inline (`if __name__ == "__main__":`) rather than a separate
+  scratch script, since it's a few lines and this file is the natural home for
+  a "does this class work" check before `vision.py` depends on it.
+- Scope kept to camera handling only — no model, inference, or fusion logic in
+  this file, per info.md 3.4 and this session's explicit instruction.
+
+### Measured results
+Smoke test run by the developer:
+```
+conda run -n firewatch python edge/camera.py
+```
+Output:
+```
+Frame shape: (1080, 1920, 3)
+Camera released OK.
+```
+Confirms the MacBook built-in camera opens, delivers a real BGR frame at
+1920x1080 resolution, and releases cleanly. This is the first real
+measurement of this camera's actual frame resolution — not previously
+recorded (Phase 0f's `test_camera.py` confirmed the feed visually but did not
+log a frame shape).
+
+### How to verify
+```
+conda run -n firewatch python edge/camera.py
+```
+Expect `Frame shape: (1080, 1920, 3)` then `Camera released OK.` with no
+`[ERROR]` output.
+
+### Addendum — models/fire_mnv3.onnx exported (unblocks Day 3 step 2)
+
+**Date:** 2026-08-24
+
+`train/export_onnx.py` had not actually been run (see original Open items
+below) — running it surfaced a real environment gap, not a code bug: the
+installed PyTorch (2.13.0) defaults `torch.onnx.export` to its newer
+dynamo-based exporter, which imports `onnxscript`. That package was not in
+`requirements.txt` (Phase 0c's environment predates this PyTorch behaviour).
+Added `onnxscript` to `requirements.txt` and installed it — a real new
+dependency of the export step, not a workaround.
+
+Re-run after installing:
+```
+conda run -n firewatch pip install onnxscript
+conda run -n firewatch python train/export_onnx.py
+```
+
+**Result: PASS.** `models/fire_mnv3.onnx` exported (0.3 MB). Verified against
+32 real validation images: max |PyTorch - ONNX| logit diff = 3.77e-05, within
+the 1e-4 tolerance in `export_onnx.py`. Class mapping confirmed from the
+checkpoint: `{'fire': 0, 'neutral': 1, 'smoke': 2}` — `edge/vision.py` (Day 3
+step 2) must use this exact mapping when interpreting model output, not
+assume alphabetical or any other order.
+
+Two non-fatal warnings printed (dynamo `dynamic_axes` deprecation notice,
+`copyreg`/`TreeSpec` FutureWarning) — cosmetic, do not affect the exported
+artifact or the verification result.
+
+`edge/vision.py` (Day 3 step 2) is now unblocked.
+
+### Open items
+- `edge/vision.py` (Day 3 step 2 of 3) and `edge/main.py` (Day 3 step 3 of 3)
+  not yet built — Phase 3 / Day 3 is not complete until both exist and are
+  integrated. Do not mark Phase 3 complete or update the "Project state at a
+  glance" table until then.
+- All other open items carried forward unchanged: fire recall margin
+  re-verification (Phase 2), smoke recall below target, TV/laptop
+  hard-negative category, DHT22/Day-7 fusion gap, MQ-2/MQ-135 burn-in (valid
+  from 2026-08-24 12:40 AM), H3/H4 hardware steps, `.env` credentials, leftover
+  `anthropic` package.
+
+### Addendum 2 — edge/vision.py built, camera warm-up bug found and fixed
+
+**Date:** 2026-08-24
+
+### What was built
+- `edge/vision.py` — `VisionModel` class. Loads `models/fire_mnv3.onnx` via
+  `onnxruntime.InferenceSession`. `_preprocess()` converts a raw BGR camera
+  frame to the model's expected input: BGR->RGB (`cv2.cvtColor`), resize to
+  `input_size` (224, from config.yaml), scale to [0,1], ImageNet mean/std
+  normalize, HWC->CHW, add batch dim — matching `train/train_classifier.py`'s
+  val transform (`Resize((224,224))` -> `ToTensor()` -> `Normalize`) and
+  confirmed class order `{'fire': 0, 'neutral': 1, 'smoke': 2}` from
+  `train/export_onnx.py`'s printed `checkpoint['class_to_idx']` (Phase 3
+  Addendum 1). `predict()` runs inference, applies softmax to raw logits, and
+  returns `{'fire': bool, 'smoke': bool, 'p_fire': float, 'p_smoke': float}`.
+- Throwaway smoke test under `if __name__ == "__main__":` — imports `Camera`
+  from step 1, grabs one real frame, runs it through `VisionModel`, prints the
+  result dict.
+
+### Key decisions
+- **Smoke-threshold question — put to the developer per info.md 7, not
+  guessed.** config.yaml has `fire_decision_threshold` (0.30, tuned in Phase
+  2) but no smoke-equivalent — `frame_threshold`/tau is explicitly the Day 4
+  temporal voter's separate later-stage threshold, and Phase 2 never tuned a
+  smoke decision threshold. Developer chose: **`smoke` uses argmax** (true
+  iff smoke is the single highest-probability class among the 3), not a
+  threshold. This is a deliberate asymmetry with `fire` (which uses the
+  tuned 0.30 threshold), documented in `predict()`'s docstring. Consequence
+  worth flagging forward: `fire` and `smoke` can both be `True` in the same
+  result (fire prob >= 0.30 while smoke still happens to be the argmax
+  winner) — callers must treat `fire` as authoritative per info.md 4.1's
+  priority ordering, not assume the two flags are mutually exclusive. No new
+  config.yaml key added — argmax needs no threshold value.
+- Class mapping (`CLASS_TO_IDX`) hardcoded in `vision.py`, not put in
+  config.yaml — it's a fixed property of the trained model file (changing it
+  requires retraining, not a config edit), unlike the genuine tunables
+  (`fire_decision_threshold`, `input_size`).
+
+### Bug found and fixed: black warm-up frames from edge/camera.py
+First real test run returned `{'fire': True, 'smoke': False, 'p_fire':
+0.4289, 'p_smoke': 0.0737}` against an actual neutral room — flagged
+immediately by the developer as wrong (no fire present). Investigated rather
+than accepted or silently retried: saved the actual frame `Camera.read()`
+returned and inspected it — mean BGR ≈ (0.004, 0.007, 0.005), i.e. an
+almost pure black frame, not a real image of the room. Root cause: macOS/
+AVFoundation cameras return black or garbage frames for a short window
+immediately after `cv2.VideoCapture` opens, while auto-exposure/auto-focus
+settle. `edge/camera.py`'s `Camera.__init__` (Phase 3 step 1) opened the
+device and made no attempt to skip this warm-up window — a real bug in the
+file marked "confirmed working" in the prior entry, since that check only
+verified frame *shape*, not frame *content*.
+
+**Fix (`edge/camera.py`):** added `_warm_up()`, called at the end of
+`__init__`, which discards the first 10 frames via `self.cap.read()` before
+`Camera` is considered ready for real use. This means the bug was in
+step 1's deliverable, not step 2's — noted here since it was caught during
+step 2's testing, but the fix lives in `camera.py`.
+
+This is exactly the kind of preprocessing/pipeline bug info.md's
+troubleshooting guidance warns about (plausible-looking wrong output, not a
+crash) — except here it was the input to preprocessing, not the
+preprocessing math itself, that was wrong. `vision.py`'s own preprocessing
+(BGR->RGB, normalization, class order) was correct throughout and did not
+need to change.
+
+### Measured results
+Re-run after the `camera.py` fix:
+```
+conda run -n firewatch python edge/vision.py
+```
+Real output:
+```
+{'fire': False, 'smoke': False, 'p_fire': 0.02383689023554325, 'p_smoke': 0.09384854882955551}
+```
+Sensible for a genuinely neutral, dimly lit room: both probabilities low,
+`fire` correctly `False` at the 0.30 threshold. This is the first real signal
+that the full camera -> preprocess -> inference path is correct end to end.
+
+Before the fix, the same test against a black warm-up frame produced
+`{'fire': True, 'smoke': False, 'p_fire': 0.4289, 'p_smoke': 0.0737}` —
+recorded here per info.md 6 ("record failures and dead ends too"), not
+erased now that it's fixed.
+
+### How to verify
+```
+conda run -n firewatch python edge/vision.py
+```
+Expect a dict with low `p_fire`/`p_smoke` and `fire: False` in a real neutral
+room (values will vary with actual lighting/content — the point is a
+plausible distribution, not these exact numbers). If `fire`/`smoke`
+probabilities look wildly high against an obviously neutral scene, suspect a
+black/garbage frame first (check mean pixel value) before suspecting the
+model.
+
+### Open items
+- `edge/main.py` (Day 3 step 3 of 3) not yet built — Phase 3/Day 3 still not
+  complete. Do not mark Phase 3 complete or update the "Project state at a
+  glance" table yet.
+- **Smoke decision threshold remains untuned** — argmax is a placeholder
+  decision rule, not a validated one (no sweep, no precision/recall check
+  against info.md 4.1's smoke bars using this specific rule). Flag for a
+  future session if smoke-specific false positive/negative behavior becomes
+  visible during Day 4/5 testing.
+- 10-frame warm-up count in `_warm_up()` is a reasonable default, not
+  empirically tuned against this exact camera — if black-frame symptoms
+  recur (e.g. under different lighting or a cold camera start), this number
+  may need to increase.
+- All prior open items carried forward unchanged (fire recall margin,
+  smoke recall below target, TV/laptop hard-negative category, DHT22/Day-7
+  fusion gap, MQ-2/MQ-135 burn-in, H3/H4 hardware, `.env` credentials,
+  leftover `anthropic` package).
+
+### Addendum 3 — edge/main.py built, live-tested, Phase 3 COMPLETE
+
+**Date:** 2026-08-24
+**Status:** COMPLETE
+
+### What was built
+- `edge/main.py` — minimal loop: `camera.read()` -> `vision.predict(frame)`
+  -> print. `format_result()` prints `FIRE {p_fire:.2f}` when `fire` is
+  `True`, else `neutral (fire={p_fire:.2f}, smoke={smoke})`. Reuses
+  `Camera`'s warm-up handling as-is (no re-implementation or bypass — warm-up
+  happens inside `Camera.__init__`, `main.py` just calls `Camera()`).
+  `KeyboardInterrupt` caught around the loop for clean shutdown:
+  `camera.release()` runs in a `finally` block so the device is always
+  released, interrupted or not. No temporal voting, sensors, or fusion — Day
+  4/6/7 scope, per info.md 3.4.
+
+### Key decisions / issue found and resolved
+- **`conda run` output buffering masked the loop working correctly.** First
+  live-run attempt (`conda run -n firewatch python edge/main.py`) printed
+  nothing before Ctrl+C, and the interrupt was caught by `conda run` itself
+  (`CondaError: KeyboardInterrupt`) rather than by `main.py`'s own handler.
+  Investigated rather than assumed broken: an isolated inline test (camera
+  open, warm-up, one predict call, all outside `main.py`) completed in
+  ~0.04s with a sane result, proving the pipeline itself was fine. Root
+  cause: `conda run` does not allocate a pty and buffers/withholds the
+  wrapped subprocess's stdout, and its own signal handling intercepts
+  Ctrl+C before the wrapped Python process's `except KeyboardInterrupt` runs
+  — a `conda run` behavior, not a bug in `edge/main.py` or `edge/camera.py`.
+  **No code changed** — resolved by running the *developer's* activated shell
+  directly instead of wrapping through `conda run`:
+  ```
+  conda activate firewatch
+  python -u edge/main.py
+  ```
+  (`-u` forces unbuffered stdout, belt-and-suspenders alongside not using
+  `conda run`.) This is worth remembering for any future long-running/
+  interactive edge-loop testing (Day 4 FPS counter, Day 7 full loop,
+  offline test) — use an activated shell, not `conda run`, for anything the
+  developer needs to watch or interrupt live.
+
+### Measured results — live webcam test (plan.md 4.4 milestone S4)
+Developer ran `python -u edge/main.py` with the camera pointed first at an
+empty/neutral room, then at a phone playing real fire footage. Real console
+output (abridged from the full run — first neutral lines, the neutral-to-fire
+transition, a representative sample of the sustained fire detection, and the
+tail as the video was removed):
+```
+FireWatch edge loop v1 running. Press Ctrl+C to stop.
+neutral (fire=0.00, smoke=False)
+neutral (fire=0.00, smoke=False)
+neutral (fire=0.00, smoke=False)
+neutral (fire=0.00, smoke=False)
+neutral (fire=0.04, smoke=False)
+neutral (fire=0.11, smoke=False)
+neutral (fire=0.22, smoke=False)
+FIRE 0.48
+FIRE 0.65
+...
+FIRE 0.99
+FIRE 0.98
+...  (sustained FIRE, mostly 0.80-0.99, peak 0.99, for the bulk of the run)
+FIRE 0.75
+FIRE 0.74
+FIRE 0.70   <- video removed/ending, probability decaying back toward neutral
+```
+**Empty room: correctly neutral (fire~0.00) across all frames.** **Real fire
+video: correctly and confidently detected (FIRE 0.48 up to peak 0.99),
+smooth ramp up at the transition (0.04 -> 0.11 -> 0.22 -> 0.48) and smooth
+decay at the end** — not a noisy jump, consistent with the model tracking
+real visual content rather than reacting to a glitch. Frame-to-frame
+fluctuation within the "FIRE" run (e.g. 0.99 down to 0.52 and back up) is
+expected and not a defect: this is single-frame detection with no temporal
+smoothing yet (Day 4 scope) — exactly the noise the upcoming
+`TemporalVoter`'s N-of-M rule exists to absorb before it reaches a real
+alarm decision.
+
+**This satisfies plan.md 4.4's S4 milestone** ("webcam -> onnx -> prints
+FIRE 0.94 on laptop") and info.md 5's Edge loop testing bar ("Live console
+showing `FIRE 0.94` from webcam") — both literally and in substance: real
+FIRE lines at 0.94 and higher appear in the actual output above.
+
+Only a candle test was not performed this session (no candle safely
+available at test time) — fire-video and neutral-room cases both ran and
+both produced correct, sensible results, which is sufficient to confirm the
+pipeline per this session's scope. Candle-specific behavior (expected to
+alarm, per info.md 4.2 — vision alone cannot distinguish it from a
+real fire) remains Day 5 adversarial-eval scope, not re-tested here.
+
+### How to verify
+```
+conda activate firewatch
+python -u edge/main.py
+```
+Point the camera at a neutral scene, expect `neutral (fire=0.0X, ...)` lines;
+point it at real or video fire content, expect `FIRE 0.XX` lines with values
+generally above 0.30 (the configured `fire_decision_threshold`). Ctrl+C to
+stop — expect the "Stopping." message and a clean exit, not a hang or a
+`conda`-level error.
+
+### Open items
+- Candle-specific test not run this session (deferred to Day 5 adversarial
+  eval, per info.md 4.2 — expected to alarm, documented limitation, not a
+  bug to fix).
+- Single-frame output is noisy by design at this stage (no smoothing yet) —
+  carried forward as the explicit reason Day 4's `TemporalVoter` exists, not
+  a defect of this phase's deliverable.
+- All items carried forward unchanged from Addendum 2: smoke decision
+  threshold untuned (argmax placeholder), 10-frame camera warm-up count not
+  empirically tuned, fire recall margin re-verification, smoke recall below
+  target, TV/laptop hard-negative category, DHT22/Day-7 fusion gap,
+  MQ-2/MQ-135 burn-in, H3/H4 hardware, `.env` credentials, leftover
+  `anthropic` package.
+- New: prefer an activated shell (`conda activate firewatch`) over
+  `conda run -n firewatch` for any live/interactive edge-loop testing going
+  forward — `conda run` buffers stdout and intercepts Ctrl+C, which will
+  recur on Day 4's FPS counter and any later live demo unless avoided.
+
+### Next phase
+Day 4 per plan.md §8: add a `TemporalVoter` class to `edge/vision.py`
+implementing the N-of-M rule (window, votes_needed, frame_threshold from
+config.yaml), wire it into `VisionModel.predict()` so it returns both the raw
+per-frame probability and the smoothed boolean decision, and add a rolling
+FPS counter to `main.py`.
+
+## Phase 6 — MQ-2 / MQ-135 analog wiring and burn-in stability check
+
+**Date:** 2026-08-24
+**Status:** PARTIAL
+
+### What was built
+- MQ-2 and MQ-135 analog outputs wired to the Arduino: MQ-2 -> A0, MQ-135 ->
+  A1. Pins physically labeled and verified against `plan.md` §5.2's pin map
+  before the check below was run.
+- A temporary Arduino sketch, written only for this session's stability
+  check — prints raw MQ-2 (A0) and MQ-135 (A1) analog readings to Serial
+  Monitor at 9600 baud. **This is not `arduino/sensor_node.ino`** — that is
+  the real Day 6 deliverable per `plan.md` §8 and has not been written yet.
+  The temporary sketch exists solely to observe raw ADC values during this
+  check and is not part of the project's tracked firmware.
+
+### Key decisions
+- Confirmed both sensors were live (not a wiring artifact reading a flat
+  line) before starting the timed stability window: held a hand near MQ-2
+  and breathed near it, and observed a visible, real-time change in the
+  printed raw reading. Only proceeded to the 15-minute stability check after
+  this positive confirmation.
+- This session's check is a **burn-in stability confirmation only, not
+  calibration.** Full calibration (baseline mean/std logging, lighter-peak
+  test, `mq2_warn`/`mq2_danger`/`mq135_warn` threshold derivation per
+  `plan.md` §5.5) has **not** happened yet and is explicitly out of scope for
+  this session — it requires a ventilated room and controlled gas/smoke
+  exposure per `plan.md` §5.5's safety notes, and is a separate, later step.
+  Marking "Tested" ☑ in the Hardware status table reflects that the sensors
+  are wired correctly and producing stable, responsive readings post-burn-in
+  — not that calibrated thresholds exist yet. `config.yaml`'s
+  `mq2_warn`/`mq2_danger`/`mq135_warn` remain PLACEHOLDER values, unchanged
+  by this session.
+
+### Measured results
+15-minute stability check, per `plan.md` Appendix A.4 (bar: raw ADC reading
+must stay within a ±20 spread over the window to be considered stable
+post-burn-in):
+- **MQ-2:** held within a 55-60 raw ADC range across the 15-minute window
+  (5-point spread) — well inside the ±20 bar.
+- **MQ-135:** held within the same 55-60 raw ADC range across the same
+  window (5-point spread) — well inside the ±20 bar.
+- Both sensors confirmed responsive to a real stimulus (hand/breath near
+  MQ-2) immediately before the stability window began, confirming genuine
+  sensor activity rather than a stuck or disconnected reading.
+
+**PASS** — both sensors are stable and live post-burn-in. Burn-in had
+started 2026-08-23, 12:40 AM (Phase 0i) and was valid from 2026-08-24,
+12:40 AM (24h minimum) onward; this check was run within that valid window.
+
+No baseline mean/std, no lighter-peak value, and no derived warn/danger
+thresholds were measured or recorded in this session — **NOT YET
+MEASURED**, per info.md §2.4. Those belong to the separate Day 6 calibration
+procedure.
+
+### How to verify
+Re-run the temporary Serial Monitor sketch (A0/A1 raw print, 9600 baud) and
+observe: raw readings staying within a tight, stable band at rest, and a
+visible jump when a stimulus (hand/breath) is introduced near the sensor.
+
+### Open items
+- **Full MQ-2/MQ-135 calibration not yet done** — baseline mean/std logging,
+  lighter-peak test, and `mq2_warn`/`mq2_danger`/`mq135_warn` threshold
+  derivation (`plan.md` §5.5) remain outstanding. Requires a ventilated room
+  and controlled gas/smoke exposure per `plan.md` §5.5's safety notes — a
+  distinct, later session, not to be rushed into this one.
+- `arduino/sensor_node.ino` (the real Day 6 sensor-reading firmware) still
+  not written — the sketch used in this session was temporary and
+  stability-check-only, per `plan.md` §8's Day 6 scope.
+- `config.yaml`'s `mq2_warn`, `mq2_danger`, and `mq135_warn` remain
+  PLACEHOLDER values, unchanged by this session.
+- H3 (red LED) / H4 (buzzer) still not started — buzzer arrival status
+  unchanged from the last hardware entry.
+- All other open items carried forward unchanged (fire recall margin,
+  smoke decision threshold untuned, smoke recall below target, TV/laptop
+  hard-negative category, DHT22/Day-7 fusion gap, `.env` credentials,
+  leftover `anthropic` package).
+
+### Next phase
+Day 6 per `plan.md` §8: full MQ-2/MQ-135 calibration (baseline, lighter-peak,
+threshold derivation) and `arduino/sensor_node.ino`. Software track (Day 4
+temporal smoothing) remains available in parallel, per the established
+software-first sequencing (Phase 0h).

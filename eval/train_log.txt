@@ -1,0 +1,31 @@
+Device: MPS (Apple-silicon GPU)
+Class mapping (alphabetical, from actual folders): {'fire': 0, 'neutral': 1, 'smoke': 2}
+Train: 18464 images, Val: 3258 images
+Epoch  1/12 [stage 1] train loss 0.6540 acc 0.7124 | val loss 0.5546 acc 0.7606 | 24.0s
+Epoch  2/12 [stage 1] train loss 0.5428 acc 0.7717 | val loss 0.5334 acc 0.7646 | 17.2s
+--- Stage 2: unfreezing backbone, LR 0.001 -> 5e-05 ---
+Epoch  3/12 [stage 2] train loss 0.4454 acc 0.8187 | val loss 0.4011 acc 0.8389 | 33.5s
+Epoch  4/12 [stage 2] train loss 0.3481 acc 0.8659 | val loss 0.3392 acc 0.8708 | 32.3s
+Epoch  5/12 [stage 2] train loss 0.2944 acc 0.8873 | val loss 0.2945 acc 0.8880 | 32.4s
+Epoch  6/12 [stage 2] train loss 0.2570 acc 0.9038 | val loss 0.2706 acc 0.8981 | 32.1s
+Epoch  7/12 [stage 2] train loss 0.2333 acc 0.9125 | val loss 0.2614 acc 0.8972 | 32.0s
+Epoch  8/12 [stage 2] train loss 0.2142 acc 0.9234 | val loss 0.2437 acc 0.9012 | 31.7s
+Epoch  9/12 [stage 2] train loss 0.2045 acc 0.9269 | val loss 0.2403 acc 0.8993 | 32.9s
+Epoch 10/12 [stage 2] train loss 0.1971 acc 0.9260 | val loss 0.2336 acc 0.9052 | 33.3s
+Epoch 11/12 [stage 2] train loss 0.1900 acc 0.9324 | val loss 0.2306 acc 0.9067 | 34.0s
+Epoch 12/12 [stage 2] train loss 0.1890 acc 0.9313 | val loss 0.2302 acc 0.9064 | 33.9s
+
+Total training wall-clock time: 369.8s
+Best val accuracy 0.9067; checkpoint: models/fire_mnv3_best.pt
+
+=== Per-class metrics (best checkpoint) ===
+Class       Precision   Recall     F1
+fire           0.9127   0.9221 0.9174
+neutral        0.9341   0.9329 0.9335
+smoke          0.8534   0.8466 0.8500
+macro F1                       0.9003
+Saved eval/confusion_matrix.png and eval/training_curves.png
+
+FIRE RECALL 0.9221 < 0.95 -- FAIL (info.md 4.1 block bar)
+Do NOT proceed to Phase 3. Per info.md 7, stop and report -- do not
+silently retrain with different hyperparameters.

@@ -9,6 +9,7 @@ re-split 85/15 here rather than respecting D-Fire's original boundaries.
 """
 
 import argparse
+import filecmp
 import random
 import shutil
 from collections import Counter, defaultdict
@@ -166,7 +167,15 @@ def write_split(
         # hard-negatives tree; disambiguate rather than silently overwriting.
         # md5 (not the built-in hash()) so the disambiguated name is stable
         # across runs/processes -- hash() is randomized per-process for str.
+        # But first check whether the existing file IS this file (byte-equal):
+        # that means a re-run over old output, and disambiguating would silently
+        # duplicate the whole dataset (this happened once -- see logs.md Phase 2).
+        # Skipping keeps re-runs idempotent; only genuinely different content
+        # sharing a name gets a suffixed copy.
         if dest_path.exists():
+            if filecmp.cmp(image_path, dest_path, shallow=False):
+                counts[class_name] += 1
+                continue
             digest = md5(str(image_path).encode()).hexdigest()[:8]
             dest_path = dest_dir / f"{image_path.stem}_{digest}{image_path.suffix}"
 
