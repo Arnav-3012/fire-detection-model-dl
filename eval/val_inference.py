@@ -20,13 +20,13 @@ CHECKPOINT_PATH = Path("models/fire_mnv3_best.pt")
 VAL_DIR = Path("data/val")
 
 
-def load_model() -> tuple[nn.Module, dict[str, int]]:
+def load_model(checkpoint_path: Path = CHECKPOINT_PATH) -> tuple[nn.Module, dict[str, int]]:
     model = models.mobilenet_v3_small(weights=None)
     model.classifier[3] = nn.Linear(model.classifier[3].in_features, NUM_CLASSES)
-    checkpoint = torch.load(CHECKPOINT_PATH, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    print(f"Loaded {CHECKPOINT_PATH} (epoch {checkpoint['epoch']}, val_acc {checkpoint['val_acc']:.4f})")
+    print(f"Loaded {checkpoint_path} (epoch {checkpoint['epoch']}, val_acc {checkpoint['val_acc']:.4f})")
     return model, checkpoint["class_to_idx"]
 
 

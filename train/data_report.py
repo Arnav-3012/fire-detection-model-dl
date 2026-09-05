@@ -15,7 +15,10 @@ CLASSES = ("neutral", "smoke", "fire")
 
 
 def print_balance_table(
-    train_counts: Counter, val_counts: Counter, hn_per_category: Counter
+    train_counts: Counter,
+    val_counts: Counter,
+    hn_per_category: Counter,
+    extra_fire_per_category: Counter | None = None,
 ) -> None:
     """Print the class balance table plus the hard-negative per-category breakdown."""
     print("\n=== Class balance ===")
@@ -41,10 +44,24 @@ def print_balance_table(
         "plan.md section 6.4's original 'shoot personally' instruction."
     )
     print(
-        "NOTE: TV/laptop fire-footage hard negatives (30 images, category 7 "
-        "of 7 per plan.md section 6.4) are still not collected. This run "
-        "proceeds without them."
+        "NOTE: tv_laptop_fire (2026-08-26) and bright_light_textured_wall "
+        "(2026-09-04) are the exceptions: self-filmed by the developer, frames "
+        "extracted by scripts/extract_tv_fire_frames.py."
     )
+
+    print("\n=== Extra fire-positive contribution by category (all -> fire, in addition to D-Fire) ===")
+    if extra_fire_per_category:
+        for category, count in sorted(extra_fire_per_category.items()):
+            print(f"  {category:<20}{count:>6}")
+        print(f"  {'TOTAL':<20}{sum(extra_fire_per_category.values()):>6}")
+        print(
+            "\nNOTE: these are reviewed small/localized-flame images (kept after "
+            "manual review, see logs.md Phase 5 addenda) folded in to address the "
+            "Day 5 Grad-CAM finding that vision under-weights small/localized "
+            "flames -- distinct from D-Fire's own fire-class images above."
+        )
+    else:
+        print("  (none found)")
 
 
 def save_balance_chart(train_counts: Counter, val_counts: Counter, output_path: Path) -> None:

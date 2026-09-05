@@ -1,33 +1,61 @@
-"""One-time manual review utility for the hard-negative images pulled by
-scripts/fetch_hard_negatives.py — not part of edge/agent/train application
-code, same category as scripts/test_camera.py. Exempt from
-config.yaml-for-tunables per info.md §3.1.
+"""One-time manual review utility for scraped image sets — originally built
+for the hard-negative images pulled by scripts/fetch_hard_negatives.py, and
+now parameterized so it can review any similarly-structured
+<root>/<category>/ image tree (e.g. the small-flame FIRE-class data from
+scripts/fetch_small_flame_images.py under
+data/additional_fire_training/scraped/). Not part of edge/agent/train
+application code, same category as scripts/test_camera.py. Exempt from
+config.yaml-for-tunables per info.md §3.1 — the target directory is a
+one-off review-session input, not a runtime tunable.
 
 Purpose: the DuckDuckGo/ddgs scrape matches on keywords, not visual content,
 so some results are wrong (e.g. a commercial steam-kettle product photo
-landing in the "steam" category with no visible vapor). This app lets the
-developer look at each image and approve or reject it before
-train/prepare_data.py treats these counts as clean.
+landing in the "steam" category with no visible vapor — see logs.md Phase 1,
+an 83% reject rate on that category). This app lets the developer look at
+each image and approve or reject it before prepare_data.py (or any future
+retrain) treats these counts as clean.
 
-How to run:
+How to run (default: the original hard-negatives directory, unchanged):
     streamlit run scripts/review_hard_negatives.py
 
-Reject moves the file to data/hard_negatives_rejected/<category>/ (never
-deletes). Decisions persist across restarts in
-data/hard_negatives_review_state.json (gitignored, since data/ is already
-covered by .gitignore).
+How to run against a different directory (e.g. the small-flame scrape):
+    streamlit run scripts/review_hard_negatives.py -- --target-dir data/additional_fire_training/scraped
+
+(The `--` before Streamlit's own args is required by Streamlit's CLI so it
+forwards everything after it to this script instead of trying to parse it
+itself.)
+
+Reject moves the file to <target-dir>_rejected/<category>/ (never deletes,
+mirroring the original data/hard_negatives_rejected/ behavior). Decisions
+persist across restarts in <target-dir-parent>/<target-dir-name>_review_state.json.
 """
 
+import argparse
 import json
 from pathlib import Path
 
 import streamlit as st
 
-HARD_NEGATIVES_DIR = Path("data/hard_negatives")
-REJECTED_DIR = Path("data/hard_negatives_rejected")
-STATE_FILE = Path("data/hard_negatives_review_state.json")
-
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def parse_target_dir() -> Path:
+    """Read --target-dir from argv, defaulting to the original hard-negatives
+    directory so existing usage (`streamlit run scripts/review_hard_negatives.py`
+    with no args) is completely unchanged.
+
+    Streamlit hands a script's own CLI args through as sys.argv, so a plain
+    argparse call works here exactly as it would in any other script.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target-dir", default="data/hard_negatives")
+    args, _unknown = parser.parse_known_args()
+    return Path(args.target_dir)
+
+
+TARGET_DIR = parse_target_dir()
+REJECTED_DIR = TARGET_DIR.parent / f"{TARGET_DIR.name}_rejected"
+STATE_FILE = TARGET_DIR.parent / f"{TARGET_DIR.name}_review_state.json"
 
 
 def load_state() -> dict[str, str]:
@@ -43,13 +71,13 @@ def save_state(state: dict[str, str]) -> None:
 
 
 def list_categories() -> list[str]:
-    if not HARD_NEGATIVES_DIR.exists():
+    if not TARGET_DIR.exists():
         return []
-    return sorted(p.name for p in HARD_NEGATIVES_DIR.iterdir() if p.is_dir())
+    return sorted(p.name for p in TARGET_DIR.iterdir() if p.is_dir())
 
 
 def list_images(category: str) -> list[Path]:
-    category_dir = HARD_NEGATIVES_DIR / category
+    category_dir = TARGET_DIR / category
     return sorted(
         p for p in category_dir.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS
     )
@@ -67,14 +95,15 @@ def reject_image(image_path: Path, category: str) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Hard negatives review", layout="centered")
+    st.set_page_config(page_title="Image review", layout="centered")
+    st.caption(f"Reviewing: {TARGET_DIR}/")
 
     if "review_state" not in st.session_state:
         st.session_state.review_state = load_state()
 
     categories = list_categories()
     if not categories:
-        st.error(f"No categories found under {HARD_NEGATIVES_DIR}/")
+        st.error(f"No categories found under {TARGET_DIR}/")
         return
 
     st.sidebar.title("Categories")

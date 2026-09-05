@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FireWatch Dashboard</title>
+    <!-- Display wordmark face for the "FireWatch" title only — bold
+         condensed industrial sans, reads as safety equipment rather than
+         a generic SaaS product. Body/data text stays on the system sans
+         stack (unchanged, already highly readable). Preconnect keeps the
+         font-load off the render-blocking critical path as much as
+         possible for a two-origin Google Fonts request. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

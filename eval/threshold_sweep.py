@@ -13,9 +13,12 @@ This is diagnostic only. It does NOT edit config.yaml and does NOT retrain --
 it reports the tradeoff curve so the developer can pick the actual value.
 """
 
+import argparse
+from pathlib import Path
+
 import numpy as np
 
-from val_inference import load_model, run_inference
+from val_inference import CHECKPOINT_PATH, load_model, run_inference
 
 CANDIDATE_THRESHOLDS = [0.30, 0.35, 0.40, 0.45, 0.50]
 RECALL_BLOCK_BAR = 0.95   # info.md 4.1
@@ -43,7 +46,11 @@ def metrics_at_threshold(fire_probs: np.ndarray, is_fire: np.ndarray, threshold:
 
 
 def main() -> None:
-    model, class_to_idx = load_model()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint", type=Path, default=CHECKPOINT_PATH)
+    args = parser.parse_args()
+
+    model, class_to_idx = load_model(args.checkpoint)
     probs, labels, _paths = run_inference(model, class_to_idx)
 
     fire_idx = class_to_idx["fire"]
