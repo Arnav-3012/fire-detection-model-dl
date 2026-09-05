@@ -13,12 +13,21 @@ limited hardware experience.
 Every session, in this order:
 
 1. Read `info.md` (this file)
-2. Read `logs.md` — this tells you what has already been built and what state it is in
+2. Read `context.md` **first** for current-state orientation — current phase,
+   recent decisions, open items. Do **not** read the full `logs.md` by default;
+   `context.md` exists specifically so routine sessions don't pay that cost.
 3. Read the relevant section of `plan.md` for the current phase
 4. Confirm the current phase out loud before writing code: *"Working on Phase X, Day N. Last completed: ___."*
+5. Only read the **full** `logs.md` when the current task specifically requires
+   historical detail — e.g. citing exact past measured numbers, understanding the
+   full reasoning behind a past decision that's being revisited, or resolving a
+   conflict where `context.md`'s summary isn't detailed enough. State explicitly
+   when this is happening: *"This task needs logs.md's full history because ___."*
+   Do not read it by default every session.
 
-**If you have lost context or are unsure what exists, read `logs.md` first. Do not
-guess, and do not rebuild something that already works.**
+**If `context.md` itself is missing, stale beyond usefulness, or contradicts what
+you find in the codebase, read `logs.md` to reorient — then regenerate
+`context.md`. Do not guess, and do not rebuild something that already works.**
 
 ---
 
@@ -232,6 +241,14 @@ When a phase completes, state explicitly: *"Run `<command>` to verify this."*
 `logs.md` is the project memory. It exists so that context loss is recoverable.
 
 **Update `logs.md` at the end of every phase, without being asked.**
+
+**In the same step, regenerate `context.md` from scratch** (overwrite, not
+append) — see `context.md`'s own header and `logs.md`'s standing instruction.
+`context.md` must stay **concise**: current phase, current model/config state,
+recent key decisions, open items. It is a fast-recovery summary, not a
+compressed retelling of every phase's full history — that's what `logs.md` is
+for. If `context.md` itself starts growing large over time, that is a signal
+to tighten it, not to add more detail.
 
 Each entry uses this exact format:
 

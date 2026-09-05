@@ -1,0 +1,1158 @@
+/* FireWatch dashboard — Vision UI structure, liquid-glass execution.
+   Not a literal clone of either reference: Vision UI's gradient-border/
+   card-grid structure, refined with heavier blur, continuous large radii,
+   and a specular top highlight per card (the "frosted glass catching
+   light" layer Vision UI itself doesn't have). Fusion-level colors
+   (levels.js) stay reserved for status — never used as chrome — so a
+   hazard signal is never ambiguous with decorative gradient.
+
+   Brand-identity pivot (2026-09-04): the neutral chrome accent moved
+   from a cool blue-cyan tech-SaaS palette to a warm ember-amber one —
+   "FireWatch" is a fire-safety product, and generic cool-blue chrome
+   read as visually mismatched with that identity across several
+   developer reviews. Base background moved from near-black navy to a
+   true warm charcoal/ash (no blue channel bias) so the ember accent has
+   the right dark backdrop to glow against. See logs.md for the full
+   reasoning. Fusion-level status colors (levels.js) are UNCHANGED by
+   this pass — SAFE stays green specifically so it never blends into the
+   new warm neutral chrome; WARNING/CRITICAL's existing amber/red now sit
+   naturally in the palette but keep their own higher saturation/glow so
+   hazard states still visually outrank ambient chrome warmth. */
+
+:root {
+  color-scheme: dark;
+  --bg-deep: #0d0b0a;
+  --bg-mid: #1a1614;
+  --panel: rgba(28, 23, 20, 0.55);
+  --panel-solid: #1c1714;
+  --border: rgba(214, 180, 154, 0.14);
+  --text: #f6f1ee;
+  --text-dim: #a89a90;
+  --accent: #f59e0b;
+  --accent-2: #dc2626;
+  --font-display: "Oswald", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius-lg: 28px;
+  --radius-md: 20px;
+  --radius-sm: 14px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Bug fix, round 2 (pre-pivot): a prior pass raised these opacities
+     (0.16->0.30, 0.10->0.20) but that was still not genuinely visible
+     against the near-black base — confirmed via a real screenshot of the
+     live page, not just reading the CSS. Pushed much further (0.30->0.50,
+     0.20->0.38) and widened both radii so the glow reads clearly at
+     normal screen brightness, not just under close pixel inspection.
+     Brand pivot (2026-09-04): same three-glow structure and opacities
+     kept (they were already tuned to be visible without becoming a
+     wash) — only the hue moved, blue-cyan (#4a9df0/#35e0d0) to
+     ember-amber (#f59e0b/#dc2626), and the base ramp moved off navy onto
+     true warm ash so nothing in the backdrop still reads "cool tech." */
+  background:
+    radial-gradient(1300px 850px at 14% -10%, rgba(245, 158, 11, 0.50), transparent 65%),
+    radial-gradient(1100px 750px at 102% 2%, rgba(220, 38, 38, 0.34), transparent 62%),
+    radial-gradient(1000px 700px at 50% 118%, rgba(245, 158, 11, 0.20), transparent 62%),
+    linear-gradient(180deg, var(--bg-mid) 0%, var(--bg-deep) 55%, #080706 100%);
+  background-attachment: fixed;
+}
+
+.app-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 2.1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: linear-gradient(120deg, #f6f1ee 12%, var(--accent) 55%, var(--accent-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.app-subtitle {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.header-error {
+  margin-left: auto;
+  color: #ff6b6b;
+  font-size: 0.85rem;
+}
+
+/* ---------------------------------------------------------------------
+   Tabs — active indicator gets a soft neutral glow (ember-amber, brand
+   pivot 2026-09-04 — was blue-cyan), matching the "glow on active/
+   interactive elements" brief.
+--------------------------------------------------------------------- */
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  padding-bottom: 2px;
+}
+
+.tab-button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  border-radius: 10px 10px 0 0;
+  transition: color 240ms var(--ease), background 240ms var(--ease), box-shadow 240ms var(--ease);
+}
+
+.tab-button:hover {
+  color: var(--text);
+  background: rgba(214, 180, 154, 0.06);
+}
+
+.tab-button:focus-visible,
+.incident-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px rgba(245, 158, 11, 0.65);
+}
+
+.tab-button--active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  box-shadow: 0 8px 20px -12px rgba(245, 158, 11, 0.55);
+}
+
+.tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* ---------------------------------------------------------------------
+   Glass card core. Gradient border via padding-box/border-box double
+   background (no extra wrapper element needed). Specular highlight is a
+   ::before inset line along the top edge, the liquid-glass refinement
+   Vision UI's flat gradient border doesn't have.
+--------------------------------------------------------------------- */
+
+.glass {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 40%),
+    var(--panel);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border-radius: var(--radius-lg);
+  border: 1px solid transparent;
+  background-clip: padding-box, padding-box;
+  isolation: isolate;
+  transition: transform 280ms var(--ease), box-shadow 280ms var(--ease);
+}
+
+.glass::before {
+  /* gradient border ring */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(140deg, rgba(245, 158, 11, 0.65), rgba(220, 38, 38, 0.32) 45%, rgba(245, 158, 11, 0.12) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.glass::after {
+  /* specular highlight — a soft light line along the top edge */
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.glass:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 44px -24px rgba(245, 158, 11, 0.45), 0 0 0 1px rgba(245, 158, 11, 0.15);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+/* ---------------------------------------------------------------------
+   12-column layout grid — Vision UI's actual structural signature is
+   varied column spans on one row, not a single stacked column. Mobile
+   collapses every span to full width.
+--------------------------------------------------------------------- */
+
+.grid-12 {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 22px;
+}
+
+.col-4 { grid-column: span 4; }
+.col-5 { grid-column: span 5; }
+.col-6 { grid-column: span 6; }
+.col-7 { grid-column: span 7; }
+.col-8 { grid-column: span 8; }
+.col-12 { grid-column: span 12; }
+
+.stack-col {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .grid-12 { grid-template-columns: 1fr; }
+  .col-4, .col-5, .col-6, .col-7, .col-8, .col-12 { grid-column: 1 / -1; }
+}
+
+/* ---------------------------------------------------------------------
+   Hero status block — the one visual anchor on Overview that isn't
+   "another glass card": a large status ring plus the most-recent-event
+   detail, standing in for Vision UI's satisfaction-rate gauge.
+--------------------------------------------------------------------- */
+
+.hero {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 26px 30px;
+  /* Soft radial glow behind the hero — the one spot on Overview that
+     should read as "richer than flat ash" without becoming a wash;
+     stays ember-amber (FireWatch palette, brand pivot 2026-09-04 — was
+     blue-cyan), never purple. */
+  box-shadow: 0 30px 90px -30px rgba(245, 158, 11, 0.35), 0 0 120px -50px rgba(220, 38, 38, 0.28);
+}
+
+.hero-ring {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  flex-shrink: 0;
+}
+
+.hero-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.hero-ring-track {
+  fill: none;
+  stroke: rgba(214, 180, 154, 0.14);
+  stroke-width: 10;
+}
+
+.hero-ring-value {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dasharray 500ms var(--ease), stroke 400ms var(--ease);
+}
+
+.hero-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.hero-ring-label .value {
+  font-size: 1.7rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-ring-label .caption {
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+.hero-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.hero-body h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.hero-body p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.hero-body .hero-badges {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.metric-card {
+  padding: 18px 20px;
+}
+
+.metric-card--alert {
+  box-shadow: 0 0 0 1px rgba(240, 69, 58, 0.5), 0 0 28px rgba(240, 69, 58, 0.35);
+  animation: pulse-critical 2.2s ease-in-out infinite;
+}
+
+@keyframes pulse-critical {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(240, 69, 58, 0.5), 0 0 22px rgba(240, 69, 58, 0.28); }
+  50% { box-shadow: 0 0 0 1px rgba(240, 69, 58, 0.75), 0 0 40px rgba(240, 69, 58, 0.55); }
+}
+
+/* ---------------------------------------------------------------------
+   Loading skeleton — shown in place of a card's content while its first
+   fetch is in flight, so data pop-in reads as "still loading" rather
+   than a blank flash. Ember shimmer sweep (brand pivot 2026-09-04 — was
+   blue-cyan) matches the accent already used for focus rings/glow
+   elsewhere.
+--------------------------------------------------------------------- */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(214, 180, 154, 0.08);
+  border-radius: var(--radius-sm);
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(245, 158, 11, 0.16) 45%,
+    rgba(220, 38, 38, 0.20) 50%,
+    rgba(245, 158, 11, 0.16) 55%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  0% { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
+}
+
+.skeleton-line {
+  height: 12px;
+  margin-bottom: 8px;
+}
+
+.skeleton-line:last-child {
+  margin-bottom: 0;
+}
+
+.skeleton-metric-value {
+  height: 26px;
+  width: 60%;
+  margin-top: 8px;
+}
+
+.skeleton-block {
+  height: 100%;
+  min-height: 120px;
+}
+
+/* ---------------------------------------------------------------------
+   Scroll-triggered entrance — a small IntersectionObserver-driven fade
+   + rise, applied via the Reveal wrapper component. Fast and subtle per
+   brief (320ms, 10px travel, no bounce) — a monitoring tool should feel
+   calm, not showy.
+--------------------------------------------------------------------- */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 380ms var(--ease), transform 380ms var(--ease);
+}
+
+.reveal--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .skeleton::after {
+    animation: none;
+  }
+}
+
+.metric-label {
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+/* Typography pass (2026-09-04): metric numbers were only ~2.4x the
+   label's font-size at a moderate weight (650) — bumped size to ~2.9x
+   and weight to 800 with tightened tracking so the number reads as the
+   clear focal point at a glance, with the label staying a genuinely
+   secondary, quiet caption rather than competing with it. */
+.metric-value {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-sub {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.panel {
+  padding: 20px 22px;
+}
+
+.panel h3 {
+  margin: 0 0 14px;
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  position: relative;
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------------
+   Card-level visual variety pass (2026-09-04). Every card previously
+   shared the exact same shape/radius/padding and the same internal
+   "small-caps label, value below" layout, so nothing drew the eye
+   regardless of color — this block gives cards a title icon, lets a
+   subset break the stacked layout for a horizontal one, and adds a
+   "priority" weight tier for the one or two most important cards per
+   tab. Fusion-level status color is untouched by any of this.
+--------------------------------------------------------------------- */
+
+.panel h3.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.panel-title svg {
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Quiet secondary metric — dials back the label/value contrast slightly
+   so it doesn't compete with a neighboring priority card. Applied to
+   cards that are useful but not the thing you look at first. */
+.metric-card--quiet .metric-value {
+  font-size: 1.5rem;
+  font-weight: 650;
+  color: var(--text-dim);
+}
+
+/* Elevated primary metric — larger number + a visible ember-tinted
+   border/glow, for the single most important figure on a tab (e.g. an
+   active CRITICAL count) without touching the shared hazard-color
+   system in levels.js. */
+.metric-card--priority {
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.28), 0 18px 40px -26px rgba(245, 158, 11, 0.5);
+}
+
+.metric-card--priority .metric-value {
+  font-size: 2.5rem;
+}
+
+/* Horizontal internal layout — icon+label on the left, large value on the
+   right — an alternative to the default stacked "label above value" so
+   not every card reads the same moving down the page. */
+.panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.panel-row + .panel-row {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 10px;
+}
+
+.panel-row-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.panel-row-label svg {
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.panel-row-label span {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.panel-row-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Cool-tint accent variant — for location/reference data (fire station)
+   that is informational rather than a hazard signal, so its card glow
+   reads as a distinct category from ember data cards without competing
+   with the fusion-level status colors, which stay red/amber/green/yellow
+   only. Steel-blue was already the "instrument reading" cool tone used
+   in LiveSensorChart, reused here for the same "not a hazard color"
+   reason. */
+.glass--cool::before {
+  background: linear-gradient(140deg, rgba(91, 143, 214, 0.55), rgba(157, 139, 214, 0.28) 45%, rgba(91, 143, 214, 0.1) 100%);
+}
+
+.glass--cool:hover {
+  box-shadow: 0 20px 44px -24px rgba(91, 143, 214, 0.4), 0 0 0 1px rgba(91, 143, 214, 0.16);
+}
+
+.glass--cool .panel-title svg,
+.glass--cool .panel-row-label svg {
+  color: #7fa8e0;
+}
+
+.panel > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------------
+   Chart-panel redesign (2026-09-04) — the two big Plotly panels on
+   Overview (fusion timeline, live sensor readings) previously had zero
+   panel chrome beyond a bare `<h3>` and read as generic "default chart
+   library" containers dropped into an otherwise considered UI. This
+   gives each a real header row (icon/title + a live at-a-glance stat,
+   so the panel does work even before you look at the chart), an ambient
+   glow tuned to what the chart is showing, and a lighter default height
+   so the two panels stop dominating the tab by sheer size.
+--------------------------------------------------------------------- */
+
+.chart-panel {
+  padding-bottom: 14px;
+}
+
+.chart-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.chart-panel-header h3 {
+  margin: 0;
+}
+
+/* Compact live readout living in the header itself — e.g. current fusion
+   level or the latest mq2/mq135 reading — so the card communicates its
+   headline fact instantly, the way the metric cards do, rather than
+   making you read the whole chart first. */
+.chart-panel-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 12px 6px;
+  border-radius: 999px;
+  background: rgba(214, 180, 154, 0.07);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-panel-stat .stat-value {
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.chart-panel-stat .stat-caption {
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+
+/* Custom legend replacing Plotly's default legend chrome (box, generic
+   sans, cramped spacing) — dots + labels styled to match the rest of the
+   UI's small-caps label language. */
+.chart-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 2px 0 4px;
+}
+
+.chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* Ambient glow behind the chart area itself — intensity/color tied to
+   what's being shown (current fusion level for the timeline; a steady
+   cool glow for the instrument-reading sensor chart) rather than a flat
+   generic panel background, so each chart feels like a distinct
+   "instrument" rather than a plain container. */
+.chart-glow-well {
+  position: relative;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.chart-glow-well::before {
+  content: "";
+  position: absolute;
+  inset: -20% -6% auto -6%;
+  height: 55%;
+  background: radial-gradient(closest-side, var(--chart-glow-color, rgba(245, 158, 11, 0.16)), transparent 72%);
+  pointer-events: none;
+  z-index: 0;
+  transition: background 500ms var(--ease);
+}
+
+.chart-glow-well > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------------------------------------------------------------------
+   Status badges — fusion-level color is the ONLY place hazard color
+   appears as more than a thin border/glow accent.
+--------------------------------------------------------------------- */
+
+.level-badge {
+  display: inline-block;
+  padding: 5px 14px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.level-badge--critical {
+  animation: pulse-critical 2.2s ease-in-out infinite;
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--panel);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.filters select,
+.filters input {
+  background: rgba(15, 18, 26, 0.65);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-family: inherit;
+  transition: border-color 200ms var(--ease), box-shadow 200ms var(--ease), background 200ms var(--ease);
+}
+
+.filters select:hover,
+.filters input:hover {
+  border-color: rgba(214, 180, 154, 0.3);
+}
+
+.filters select:focus,
+.filters input:focus {
+  outline: none;
+  border-color: rgba(245, 158, 11, 0.6);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+}
+
+/* Custom select chevron (SVG data-URI so it themes without JS) — the
+   native OS-drawn arrow is what breaks the glass look worst. */
+.filters select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a89a90' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 16px;
+}
+
+.filters select option {
+  background: var(--panel-solid);
+  color: var(--text);
+}
+
+/* Native date/datetime-local inputs: re-skin every themeable part,
+   including the browser-drawn calendar icon (inverted so it reads on a
+   dark glass field instead of the default dark-on-transparent glyph that
+   disappears against this background). */
+.filters input[type="date"],
+.filters input[type="datetime-local"] {
+  cursor: pointer;
+  color-scheme: dark;
+}
+
+.filters input[type="date"]::-webkit-calendar-picker-indicator,
+.filters input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  /* Brand pivot (2026-09-04): was hue-rotate(175deg), landing on a cool
+     blue (#6eb5ff) to match the old accent. Measured the actual filtered
+     output in headless Chrome across a hue sweep — hue-rotate(0deg) (i.e.
+     dropping the rotation entirely) lands on #e2a83f, already an amber
+     essentially matching the new --accent (#f59e0b) with no rotation
+     needed, since sepia()'s own target hue is warm to begin with. */
+  filter: invert(60%) sepia(35%) saturate(700%) hue-rotate(0deg) brightness(1.05);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 160ms var(--ease);
+  border-radius: 4px;
+}
+
+.filters input[type="date"]::-webkit-calendar-picker-indicator:hover,
+.filters input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------
+   Micro-interactions — creative-latitude additions (see logs.md). Kept
+   to existing colors, sub-200ms, restrained.
+--------------------------------------------------------------------- */
+
+/* Tactile press feedback on the tab bar and filter controls — a slight
+   scale-down on :active reads as "this responded to your click" without
+   adding any new color or shape. */
+.tab-button,
+.filters select,
+.filters input,
+.incident-card {
+  will-change: transform;
+}
+
+.tab-button:active,
+.filters select:active,
+.filters input:active {
+  transform: scale(0.97);
+}
+
+/* Live-data "just refreshed" pulse — a single quick ring, not a repeating
+   animation, so it reads as one event (new data arrived) rather than
+   decoration. Applied briefly via a toggled class in JS. */
+.refresh-flash {
+  animation: refresh-flash-ring 600ms var(--ease);
+}
+
+@keyframes refresh-flash-ring {
+  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
+  100% { box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+}
+
+.filter-sep {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.85rem;
+}
+
+.data-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.data-table tbody tr {
+  transition: background 200ms var(--ease);
+}
+
+.data-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Status pill — an outcome/result indicator distinct from the fusion
+   level-badge, so a table row carries two independent signals (level +
+   outcome) the way Vision UI's Authors Table pairs a role with a status
+   chip, not one badge doing double duty. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 6px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  background: rgba(214, 180, 154, 0.12);
+  color: var(--text-dim);
+}
+
+.status-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-pill--positive { background: rgba(45, 212, 167, 0.14); color: #2dd4a7; }
+.status-pill--negative { background: rgba(240, 69, 58, 0.14); color: #f0453a; }
+.status-pill--neutral { background: rgba(214, 180, 154, 0.14); color: var(--text-dim); }
+
+.detail-row pre {
+  margin: 0;
+  padding: 14px;
+  background: rgba(13, 11, 10, 0.6);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+}
+
+.mono-cell {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.station-info {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+
+/* Fire-station tab bug fix: "Nearest fire station" and "Emergency
+   numbers" sit side by side at genuinely equal card height (confirmed
+   via measured DOM rects — both 235px), but the left card's content
+   (three short label/value pairs) left visible dead space below it
+   while the right card's extra description text + stacked layout
+   reached further down — so the two cards *looked* mismatched even
+   though neither actually was. Fix: make the panel a flex column so its
+   content area can grow and vertically center, filling the card's full
+   height instead of hugging the top. */
+.station-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.station-info--fill {
+  flex: 1;
+  align-items: center;
+  margin-top: -14px; /* offsets the h3's own bottom margin so centering reads true */
+}
+
+.metric-value--lg {
+  font-size: 1.4rem;
+}
+
+/* ---------------------------------------------------------------------
+   Empty / error states — same glass treatment, centered icon, per brief
+   ("empty/error states get the same glass-card treatment with a centered
+   icon rather than plain floating text").
+--------------------------------------------------------------------- */
+
+.state-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+/* Contained empty state for sparse tabs — a reasonably-sized, centered
+   block instead of a lonely full-width card floating in empty space. */
+.state-card-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.state-card-wrap .state-card {
+  width: 100%;
+  max-width: 480px;
+}
+
+.state-card svg {
+  width: 34px;
+  height: 34px;
+  opacity: 0.75;
+  position: relative;
+  z-index: 2;
+}
+
+.state-card span {
+  position: relative;
+  z-index: 2;
+  font-size: 0.9rem;
+  max-width: 46ch;
+}
+
+.state-card--error svg,
+.state-card--error span {
+  color: #ff6b6b;
+}
+
+/* ---------------------------------------------------------------------
+   Live incident feed — blog/feed-style cards.
+--------------------------------------------------------------------- */
+
+.incident-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.incident-card {
+  padding: 16px 20px;
+  cursor: pointer;
+}
+
+.incident-card__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 2;
+}
+
+.incident-card__time {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.incident-card__summary {
+  margin: 10px 0 0;
+  font-size: 0.9rem;
+  color: var(--text);
+  position: relative;
+  z-index: 2;
+}
+
+.incident-card__meta {
+  margin-top: 8px;
+  display: flex;
+  gap: 16px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  position: relative;
+  z-index: 2;
+}
+
+.incident-card__expand {
+  margin-top: 14px;
+  position: relative;
+  z-index: 2;
+}
+
+/* ---------------------------------------------------------------------
+   Count-up metric animation target (JS drives the number; this just
+   keeps the transition smooth when the underlying value node swaps).
+--------------------------------------------------------------------- */
+
+.count-up {
+  display: inline-block;
+  transition: opacity 200ms var(--ease);
+}
+
+.empty-state {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.error-state {
+  color: #ff6b6b;
+}
+
+/* ---------------------------------------------------------------------
+   Chart hover tooltips — a small glass card driven by Plotly's
+   onHover/onUnhover events, replacing the plain browser-default tooltip
+   Plotly ships with (chart traces set hoverinfo: "none"/"skip" and this
+   renders instead). Positioned absolutely within the chart's own panel.
+
+   Bug fix (2026-09-04): `left`/`top` used to be the raw cursor position
+   with a CSS transform doing the "center above the point" math — for a
+   point near a container's top-left corner (e.g. the earliest CRITICAL
+   event on the fusion timeline) this pushed the box up and left past
+   the container's own edges, covering the row labels/title instead of
+   floating near the point. `left`/`top` are now the tooltip's own final
+   clamped position, computed in JS (ChartTooltip.jsx) after measuring
+   the tooltip's real rendered size — no transform needed, it's already
+   the right coordinate.
+--------------------------------------------------------------------- */
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  min-width: 160px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  box-shadow: 0 16px 36px -16px rgba(0, 0, 0, 0.55);
+}
+
+.chart-tooltip-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-tooltip-rows {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.chart-tooltip-row dt {
+  color: var(--text-dim);
+}
+
+.chart-tooltip-row dd {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.chart-container {
+  position: relative;
+}

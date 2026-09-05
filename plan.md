@@ -628,6 +628,121 @@ append it as one JSON line to dispatch_log.jsonl. It must include
 Print a clear console banner. Never make a real call.
 ```
 
+### Day 8/9 revised scope (decided 2026-08-31, not yet built)
+
+The Day 8 and Day 9 prompts above are the original spec and are left
+unedited. The following decisions, made 2026-08-31, extend that scope
+for when Phase 8/9 is actually built. This section is planning/
+documentation only — none of it is implemented yet.
+
+**Notification channels: now two, not one.**
+1. Telegram — unchanged from the Day 9 prompt above (alert message,
+   30s cancel window, then simulated dispatch on no response/cancel).
+2. **NEW: Twilio call and/or SMS to the developer's own phone number.**
+   Not any emergency service — info.md §2.1's absolute rule only
+   prohibits contacting real emergency services; alerting the
+   developer's own number was always implicitly fine and is now
+   explicit. Same 30s confirm/cancel window pattern as Telegram.
+   Requires Twilio credentials in `.env`: `TWILIO_ACCOUNT_SID`,
+   `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `TWILIO_TO_NUMBER` (match
+   `.env.example` naming conventions when added — same no-secrets-in-
+   code rule, info.md §2.5, as every other credential).
+   **Cost note: Twilio is a real-cost service**, unlike Groq/Telegram's
+   free tiers (see §4.3 tool-choices table above, which previously
+   noted "Twilio trial is restrictive" as a reason to avoid it — that
+   reasoning is superseded by this decision, not deleted). Flag this
+   clearly wherever the project's cost/budget is documented, so it is
+   never presented as fully free.
+
+**GPS / location capability — scope clarified.**
+Per the existing "hardcoded coordinates, GPS optional" decision
+(§1, unchanged), the concrete Overpass deliverable is: query and
+**display** the nearest real fire station's contact info for the
+hardcoded/simulated coordinate (the Day 8 prompt's
+`find_nearest_fire_station` above, previously listed in §9's cut list
+and now being actively planned rather than cut). This is purely
+informational display. **The system never calls or contacts that
+number.** Read-only lookup/display only — never an automated contact
+action — to avoid any future ambiguity against info.md §2.1.
+
+**Refinement (2026-09-01): fire station name + number goes IN the
+alert content on both channels, not just a separate display field.**
+The Overpass-looked-up nearest fire station's name and phone number
+must appear inside the actual notification content the developer
+receives, not only in some other display surface:
+- **Telegram:** the fire station name and number are included as
+  plain text in the alert message body itself, alongside the
+  compose-node's generated alert text.
+- **Twilio call:** the fire station name and number are included in
+  the TTS (text-to-speech) content the call reads aloud, using the
+  same compose-node-generated text as Telegram, or — per info.md §3.2
+  and consistent with the LLM-failure fallback already planned for
+  Telegram — a clear deterministic template fallback if the LLM call
+  fails. Delivery mechanism (spoken vs. written) does not change what
+  content is required.
+
+**Purpose, stated explicitly so it is never ambiguous later:** this
+is informational only, so the **developer** (the person receiving the
+alert) can call the real fire station themselves, immediately,
+without needing to look anything up. **The system NEVER dials,
+forwards, or connects to the fire station's number automatically, on
+the Twilio call, on Telegram, or on any other channel, under any
+condition.** This applies identically to voice calls as it does to
+SMS/Telegram — the fact that a call can *read the number aloud* is not
+license to also *dial* it. Including the number as content read to or
+shown to the developer is categorically different from the system
+placing a call or sending a message to that number itself, and must
+never be conflated in a future implementation. This restates and
+narrows — does not relax — the "system never calls or contacts that
+number" rule two paragraphs above; both statements describe the same
+boundary and must be read together, not against each other.
+
+**Alert feedback logging — new scope, data collection only.**
+Every alert (Telegram and/or Twilio) that reaches the 30s window
+should have its outcome captured — true positive (real hazard) vs
+false alarm, based on the developer's response — and logged as
+structured data (e.g. a new `eval/alert_feedback.csv` or similar,
+exact format to be decided when this phase is actually built).
+**This is explicitly scoped as data collection only.** Per info.md
+§2.4 (no fabricated metrics/results), do not build, imply, or claim
+any reinforcement learning or automated threshold adjustment from
+this data unless and until it is actually built and evaluated later —
+current timeline (30 August deadline) makes a real, defensible RL
+implementation unlikely to fit, and a fabricated or trivial "RL" claim
+would violate the project's own no-fabrication rule. If time allows
+later, RL becomes a legitimate future-work item building on this
+logged data — explicitly not committed to as of this update.
+
+**Alert feedback schema — decided ahead of implementation (2026-08-31),
+so an RL-shaped log doesn't require re-migration later.** RL itself
+remains fully deferred and not committed per the paragraph above; this
+only decides the *shape* of the data being collected once Phase 8b is
+actually built, following an RL-style state/action/reward/metadata
+structure:
+
+- **STATE** — the full decision context at the moment of the alert:
+  fusion level at trigger (WARNING/CRITICAL), `p_fire`, MQ-2 raw value,
+  MQ-135 raw value, `gas_high` boolean, temporal voter vote count.
+- **ACTION** — the threshold configuration in effect at that moment:
+  `mq2_warn`, `mq2_danger`, `mq135_warn`, `mq135_danger`,
+  `fire_decision_threshold`, `votes_needed` — the tunable parameters a
+  future RL policy would adjust.
+- **OUTCOME/REWARD** — the developer's response during the 30s cancel
+  window, translated to a reward signal: `+1` for confirmed real
+  hazard, `-1` for false alarm (developer cancels). **Timeout-with-
+  no-response is an explicit open decision, deliberately not made
+  now** — must be decided when Phase 8b is actually implemented, not
+  left ambiguous in the shipped code.
+- **METADATA** — timestamp and a trial/event ID, for tracing back to
+  `logs.md`/report narrative.
+
+If this decision is ever acted on, the bounded scope is a contextual
+bandit or tabular Q-learning over these threshold knobs — **not deep
+RL** — given realistic trial counts achievable by the 30 August
+deadline. If trial volume ends up insufficient for any RL formulation,
+this logged data still stands alone as valid, honest labeled feedback
+data for the report, independent of whether RL is ever built.
+
 ### Day 10 — cloud
 
 ```

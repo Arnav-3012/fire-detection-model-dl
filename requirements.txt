@@ -13,7 +13,6 @@ langchain-core
 groq
 boto3
 paho-mqtt
-streamlit
 python-dotenv
 pyyaml
 requests

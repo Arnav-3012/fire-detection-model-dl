@@ -1,0 +1,72 @@
+# FireWatch configuration TEMPLATE — copy to config.yaml and fill in the
+# values marked EXAMPLE / SET YOUR OWN below. config.yaml itself is
+# gitignored (it carries this deployment's serial port, GPS coordinates,
+# and S3 bucket name) — this file is the tracked, shareable reference for
+# every key and what it means. Every threshold, port, and path lives here.
+# No magic numbers in application code (info.md 3.1).
+#
+# Values marked "PLACEHOLDER — Day 6 calibration" are not real measurements.
+# They must be replaced after the MQ sensors complete 24-48h burn-in and the
+# calibration procedure in plan.md section 5.5 is run. Do not treat them as
+# valid thresholds until then (info.md section 8).
+
+vision:
+  model_path: models/fire_mnv3.onnx  # PRODUCTION = v4 since 2026-09-05 (byte-identical to models/fire_mnv3_v4.onnx, sha 36de3559…; ONNX diff 5.99e-05 PASS). v3 archived as fire_mnv3_v3_superseded.*, v2 as fire_mnv3_v2_superseded.*, v1 as fire_mnv3_v1_backup.*. See logs.md "Phase 2 addendum — v4 promotion decision".
+  input_size: 224                # MobileNetV3-Small expected input, plan.md 4.3
+  fire_decision_threshold: 0.30   # probability threshold for the model to call a single frame "fire" (P(fire) >= this), eval/threshold_sweep.py, logs.md Phase 2. Re-verified on every checkpoint (v2, v3, v4): 0.30 is still the lowest threshold clearing both info.md 4.1 bars — v4: fire recall 0.9575 / precision 0.8664 @ 0.30. NOT the same as frame_threshold/tau below — that is the Day 4 temporal voter's separate later-stage threshold on top of this one.
+  smoke_decision_threshold: 0.45  # a frame is "smoke" only if smoke is the argmax winner AND P(smoke) >= this. Set 2026-09-04 from eval/smoke_threshold_sweep.py on v3: argmax alone let smoke win 3-way splits at P(smoke) 0.28-0.44 (live spurious WATCH states); 0.45 removes that band at a val cost of 1 smoke image in 880 on v3. Re-verified on v4 (production, 2026-09-04 sweep): smoke recall 0.8511 at this argmax-AND rule — clears info.md 4.1's 0.85 block bar for the first time (v3 was 0.8284, below it); val smoke FP 109. See logs.md "Smoke decision threshold" and "Phase 2 addendum — v4 promotion decision".
+  frame_threshold: 0.70           # tau — per-frame confidence threshold for the Day 4 TemporalVoter (edge/vision.py, live since Phase 4), plan.md 6.1 initial value. Distinct from fire_decision_threshold above.
+  window: 8                       # M — rolling window size in frames (~1s at 8 FPS), plan.md 6.1 initial value
+  votes_needed: 5                 # N — votes required within window, plan.md 6.1 initial value
+  smoke_votes_needed: 5           # N for the smoke TemporalVoter (edge/vision.py, added 2026-09-04): smoke's per-frame argmax-AND flag now needs this many votes in the same `window` before fuse() sees smoke (WATCH, or CRITICAL with gas). Deliberately equal to fire's votes_needed: the observed live failure was isolated single frames (any N>=2 removes it), smoke also sits on the rule-1 CRITICAL path so it must not be looser than fire, and no smoke adversarial sweep exists yet to justify a different value (plan.md 6.1: tune on clips, not intuition). Separate key so it can be swept without touching fire. See logs.md "Smoke temporal voting".
+
+sensors:
+  serial_port: "SET YOUR OWN"      # EXAMPLE was "/dev/cu.usbmodem141011" (macOS). Machine-specific — find yours via Arduino IDE, Tools -> Port (macOS: /dev/cu.usbmodem*, Linux: /dev/ttyACM*/ttyUSB*, Windows: COM*)
+  baud: 9600                      # plan.md 8, Day 6 prompt
+  mq2_baseline: 57.1               # CALIBRATED 2026-08-31. Clean-air reading before the unlit gas-stove release trial (peak=252). Previously only lived as a comment on mq2_warn below (schema gap) — added here as a real key for the dashboard's live-sensor chart y-axis (2026-09-04, see logs.md).
+  mq2_warn: 115.57                # CALIBRATED 2026-08-31. baseline=57.1, peak=252 (unlit gas-stove release ~20cm, ~5s). Formula: baseline + 0.30 * (peak - baseline), plan.md 5.5. See logs.md Phase 6 calibration entry
+  mq2_danger: 174.04               # CALIBRATED 2026-08-31. Same baseline/peak as mq2_warn. Formula: baseline + 0.60 * (peak - baseline), plan.md 5.5
+  mq135_baseline: 51.1              # CALIBRATED 2026-08-31. Clean-air reading before the alcohol/hand-sanitizer vapor trial (peak=210). Previously only lived as a comment on mq135_warn below (schema gap) — added here as a real key for the dashboard's live-sensor chart y-axis (2026-09-04, see logs.md).
+  mq135_warn: 98.77                # CALIBRATED 2026-08-31. baseline=51.1, peak=210 (alcohol/hand-sanitizer vapor trigger — breath test rejected as too weak a stimulus, see logs.md Phase 6 calibration entry). Formula: baseline + 0.30 * (peak - baseline)
+  mq135_danger: 146.44             # CALIBRATED 2026-08-31. Same baseline/peak as mq135_warn. Formula: baseline + 0.60 * (peak - baseline). NOTE: this key did not previously exist in config.yaml (schema gap — only mq135_warn was ever specified); added here since the same formula produces a danger value and downstream fusion logic will need it
+  temp_rise_rate: 2.0             # PLACEHOLDER — Day 6 calibration. Degrees change over the 10-sample window that counts as "spiking", edge/sensors.py Day 6 prompt
+  gas_warmup_seconds: 240         # Phase 7 warm-up gate: seconds after the FIRST valid serial reading during which gas_high is forced False in edge/main.py. Cold MQ-135 reads ~100-102, above mq135_warn=98.77 (logs.md Phase 7). Sourced settle figure for a burnt-in sensor after a normal power cycle is 2-5 min (Envistia/PCBSync, logs.md Phase 6) — NOT the 1h post-storage re-warm, which is a different scenario. 2026-08-31 session-start check found this at 180s (not the 10s recorded in logs.md/context.md as the leftover testing value) — reset to 240s per developer instruction; see logs.md Phase 7 addendum for the discrepancy note. Vision detection runs normally during the gate.
+
+fusion:
+  cancel_window_seconds: 60       # Flat decision time to reply CANCEL before escalation, plan.md Day 9 prompt. 2026-09-02: reverted to this flat value — the earlier call-duration extension no longer applies now that the Twilio voice call is out of scope (agent/escalate.py); SMS carries no extension. 2026-09-02 (later same day): raised 30->60 — more realistic time to notice and respond to an alert across multiple channels (Telegram + SMS), deliberate config change, no code change required (info.md 3.1, single source of truth)
+  notify_cooldown_seconds: 60     # plan.md Day 7: minimum seconds between agent notifications so one fire does not spam the agent. Consumed by edge/main.py's network step (placeholder until Phase 8 — the local buzzer has NO cooldown, only the network notify)
+
+agent:
+  host: "SET YOUR OWN"             # EXAMPLE was "127.0.0.1". Phase 8: agent server binds locally only — the agent is a same-machine companion process to edge/main.py, never an exposed service
+  port: 8000                       # EXAMPLE port; change if 8000 is taken locally
+  incident_url: "SET YOUR OWN"     # EXAMPLE was "http://127.0.0.1:8000/incident" — must match host:port above. Where edge/main.py POSTs (plan.md Day 7/8). 2s timeout enforced in main.py, info.md 3.2
+  groq_model: "openai/gpt-oss-20b"  # Groq's recommended replacement after llama-3.1-8b-instant was deprecated 2026-08-16 (post-dating plan.md 4.3's choice). Still free tier: 30 req/min, 1,000 req/day — lower daily cap than the old model's 14,400 but far above this project's alert volume. Composition ONLY, never detection (info.md 2.3)
+  groq_timeout_seconds: 10        # compose must not stall the alert path; on timeout the deterministic template goes out instead
+  dispatch_log: "dispatch_log.jsonl"  # plan.md Day 9 — one JSON line per SIMULATED dispatch, repo root (dashboard Day 11 reads this path)
+  snapshot_dir: "data/incidents"  # where /incident saves the base64 snapshot main.py sends
+  telegram_poll_seconds: 2        # getUpdates polling interval inside the 30s cancel window
+  overpass_url: "https://overpass-api.de/api/interpreter"  # Phase 8b: OSM Overpass endpoint (free, no key). DISPLAY-ONLY lookup — result is alert text, never a dial target (plan.md Day 8/9 revised scope)
+  overpass_radius_m: 7000         # search radius for amenity=fire_station around location.* — wide enough for suburban coverage; plan.md 11 says widen this first if Overpass returns nothing
+  overpass_timeout_seconds: 8     # hard bound on how long the once-per-incident lookup may run before the graceful fallback line goes out instead — bounds the worst-case delay it can add before notify_owner
+  # tts_words_per_minute: 150      # UNUSED since the Twilio voice call was dropped from scope 2026-09-02 (agent/escalate.py) — was the assumed <Say> speech rate for estimating call duration. Left commented in case the call is revisited later.
+  twilio_timeout_seconds: 10      # per Twilio REST request (SMS only — the call is out of scope, agent/escalate.py). Failure logs a warning and continues — Telegram has already been sent by then
+  feedback_log: "eval/alert_feedback.csv"  # Phase 8b RL-shaped feedback log, append-only. CSV to match eval/calibration/'s existing pattern. Data collection ONLY — no RL is built or implied (info.md 2.4)
+
+live_log:                          # Phase 11: 1 Hz rolling live-readings buffer for the dashboard's live chart (edge/livelog.py)
+  path: data/live_sensors.json     # atomic-replace JSON snapshot; read by dashboard /api/live-sensors. LIVE VIEW ONLY — dispatch_log.jsonl/alert_feedback.csv/S3 remain the permanent record
+  buffer_size: 600                 # rolling window: last 600 samples = 10 min at 1 Hz; oldest overwritten
+  sample_interval_seconds: 1.0     # matches the Arduino's 1 Hz stream (edge/sensors.py) — deliberately NOT per-frame at 30 FPS
+
+location:
+  latitude: 0.0                    # SET YOUR OWN — hardcoded coordinates, plan.md section 1 item 8 (GPS optional, will not lock indoors). Used for agent/locate.py's Overpass fire-station lookup.
+  longitude: 0.0                   # SET YOUR OWN — see latitude above
+  address: "NOT SET"               # PLACEHOLDER — Day 6 calibration. Human-readable location for alert text
+
+emergency_fallback:
+  fire_number: "101"               # 2026-09-02: shown in the alert ONLY when Overpass genuinely fails to find a station (info.md 3.2) — never dialed by the system itself, DISPLAY-ONLY same as agent/locate.py's normal result (info.md 2.1)
+  unified_number: "112"            # same DISPLAY-ONLY rule as fire_number above
+
+aws:
+  s3_bucket: "SET YOUR OWN"        # EXAMPLE was "firewatch-dispatch-arnav" — your S3 bucket name, must already exist (cloud/uploader.py does not create it)
+  region: null                     # Phase 10: AWS_DEFAULT_REGION from .env is used if this is null; set here only to override
+  max_uploads_per_session: 50      # Phase 10 cost-safety circuit breaker (info.md 2.1 spirit, developer zero-tolerance requirement): hard cap on S3 PutObject calls per running main.py session. CRITICAL incidents are rare and each uploads at most 2 objects (json+jpg), so 50 is far above any expected real session count — this is a deliberate breaker for an unforeseen bug, never expected to be hit in normal use. cloud/uploader.py logs a loud warning and stops uploading (not crashing) if it's ever reached.

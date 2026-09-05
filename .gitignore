@@ -1,5 +1,6 @@
-# secrets
+# secrets / environment-specific config (see .env.example / config.example.yaml)
 .env
+config.yaml
 
 # model weights and data
 models/
@@ -10,6 +11,23 @@ __pycache__/
 *.pyc
 *.onnx
 *.pt
+
+# node
+node_modules/
+dashboard/frontend/dist/
+
+# adversarial eval videos — large (up to ~290MB each), exceed GitHub's
+# 100MB hard limit, kept local-only for eval/run_eval.py
+eval/adversarial/*.mov
+data/adversarial_extra/*.avi
+
+# OS junk
+.DS_Store
+
+# runtime-generated logs — real incident/sensor data, not source
+dispatch_log.jsonl
+eval/alert_feedback.csv
+data/live_sensors.json
 
 # calibration logs (raw measurement data, not source)
 eval/calibration/*.csv
