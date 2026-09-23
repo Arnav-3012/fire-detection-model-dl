@@ -45,3 +45,7 @@ baseline_history.json
 # graphify cache/incremental state — regenerable, not source
 graphify-out/cache/
 graphify-out/.graphify_incremental.json
+
+# WiFi credentials for the ESP32 sketches — local only, never committed.
+# secrets.example.h IS tracked as the template; secrets.h is not.
+arduino/*/secrets.h

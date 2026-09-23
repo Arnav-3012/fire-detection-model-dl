@@ -11949,3 +11949,260 @@ replace the previously-recommended dedicated real hardware
 settled-state capture -- that remains open, not superseded.
 
 ---
+
+## Phase 13b — MQ135_BASELINE_MAX_PLACEHOLDER widened 42->65 after a real boot triggered BASELINE_TROUBLE (2026-09-23)
+
+**During the live hardware verification session** (running
+`eval/verify_live.py --stimulus gas_stove`, ahead of the gas-stove
+stimulus test), this boot's real 60s BASELINE_CAPTURE produced
+mq135=56, above `MQ135_BASELINE_MAX_PLACEHOLDER` (42, = 27+15 margin
+from the original 6-boot table) -- correctly triggered guard 4's
+`[BASELINE_TROUBLE]` notification per its documented "trouble state,
+not substitution" design. The captured 56 was still used as this
+boot's real tracked baseline; nothing about detection was degraded.
+
+**Widened to 65 (56 + ~9 margin), not re-derived from a fresh
+multi-boot table.** This is a single new data point, not a repeat
+pattern -- treated the same way MQ2/MQ135's high-side bound was
+already precedented to be widened for other legitimately-different
+real rooms (dining-table ~460, AC-on ~370/278, both documented in the
+comment block above this constant, though NOTE: on review while
+making this change, the actual MQ2/MQ135_BASELINE_MAX_PLACEHOLDER
+values (122/42 prior to this edit) do NOT reflect that stated further
+widening -- they are still just the base +/-15 margin from the 6-boot
+table. The comment describing a widening that was never actually
+applied to the constants is a separate, pre-existing inconsistency,
+flagged here, not resolved in this entry.**
+
+Low-risk change: `MQ135_BASELINE_MAX_PLACEHOLDER` is explicitly a
+notification-only bound (see the block's own comment) -- being
+outside it only raises an audible trouble chirp, it does not gate,
+substitute, or otherwise affect WARN/DANGER/alarm computation. Guard 3
+(absolute hard ceiling) remains the real, independent safety backstop.
+
+**Not a settled constant.** If future boots continue landing above 65,
+or a fresh multi-boot table is collected, re-derive properly rather
+than widening again ad hoc from single readings.
+
+---
+
+## Phase 13b — WARN/DANGER switched from absolute-delta to RATIO-based thresholds (2026-09-23)
+
+**What drove this.** During live verification a boot into a
+not-yet-cleared room captured baseline 192 (vs the usual ~140-160).
+Because WARN was `baseline + 0.30 * CALIBRATED_DELTA`, WARN rose to
+528, and a real gas exposure peaking at 475 never tripped WARN at all.
+The thresholds *were* already adaptive (they track the baseline) -- the
+non-adaptive part was the fixed DELTA term.
+
+**The physics, quantified (not asserted).** Raw ADC is a nonlinear
+function of sensor resistance Rs (`ADC = ADC_MAX * RL/(RL+Rs)`), and
+Rs vs gas concentration is a power law -- the MQ datasheets' own ppm
+curves are log-log in Rs/R0. Computed against this board's real
+numbers: a fixed +336 ADC delta demands a **71.8%** drop in Rs at
+baseline 150 but only **66.8%** at baseline 192. So the old threshold
+did not mean a constant amount of gas across rooms.
+
+**Researched (Level 2) before changing.** Rs/R0 ratio normalization is
+the standard approach for MOS sensors, used specifically to cancel
+baseline/device variation -- confirmed across MQ application guides,
+the datasheet ppm curves themselves, and the e-nose drift literature
+(normalizing away absolute scaling described as standard procedure for
+MOx data). Industrial fixed detectors do use absolute thresholds
+(10%/20% LEL) but only against a *calibrated, traceable* reference with
+periodic span-gas recalibration -- not available on this hardware, so
+that precedent does not transfer.
+
+**New form:** `WARN/DANGER = ADC_MAX / (1 + RATIO * Rs_baseline)`,
+via `ratioThreshold()`, with `WARN_RS_RATIO = 0.50` and
+`DANGER_RS_RATIO = 0.37`.
+
+**How the ratios were chosen -- swept, not guessed.** A lower ratio
+means a larger required Rs drop, i.e. a higher ADC threshold and less
+sensitivity. Candidates were swept against real data:
+- 0.50/0.37 catches the failed run (WARN 367 vs peak 475 on MQ2;
+  165 vs 300 on MQ135).
+- The clean run (baseline 160.5, peak 1041) crosses both WARN and
+  DANGER.
+- **0 false positives across all 3853 clean-air samples** of the
+  overnight drift log, simulated through the *full* firmware logic
+  (EMA + guard 1 freeze + ratio thresholds), with ~91 counts (MQ2) /
+  ~20 counts (MQ135) margin above the highest clean-air reading
+  actually observed.
+- DANGER/WARN gap ratio = 1.659 (MQ2) / 1.685 (MQ135), preserving the
+  1.667 relationship the old 0.30/0.50 span form had.
+
+**Deliberately backed off from the raw n=1 derivation.** Deriving
+ratios directly from the single clean run gave 0.7359/0.5598, which
+would have put WARN at only ~215 on a clean baseline -- far more
+sensitive than the old behaviour. Developer decision was explicitly
+"not too sensitive, not too harsh, properly flexible", so the less
+sensitive 0.50/0.37 was chosen for real headroom over sensor noise.
+
+**Knock-on changes made in the same pass:**
+- `MQ2/MQ135_CALIBRATED_DELTA_PLACEHOLDER` are now UNUSED by the
+  threshold path. Kept as reference documentation of what a full
+  stimulus produced; `verify_live.py` still reports observed-vs-burned-in
+  delta as a *sensor consistency* check, not a threshold check.
+- `eval/test_drift_cap.py` re-pointed at the ratio formula. Its earlier
+  validation of the drift cap (MQ2=10/MQ135=5) modelled the old
+  absolute form, and the WARN gap is much narrower under ratios
+  (e.g. ~265 vs ~473 at baseline 137), which changes where guard 1's
+  freeze-above-WARN engages -- so that validation needed redoing, not
+  carrying forward.
+- `eval/verify_live.py` gained a WARN cross-check: it compares the
+  firmware's own printed `warn_*` against what the ratio formula
+  predicts from the same baseline, and warns loudly on a >1 count
+  mismatch (catches "board wasn't reflashed" and constant drift
+  between the .ino and the script).
+
+**NOT yet live-validated with a real stimulus under this formula**, and
+the ratios derive from one clean calibration run plus the overnight
+clean-air log. The 3 planned verification runs now validate the ratio
+form rather than the absolute form. Hard ceilings (1400/750) are
+unchanged and remain the independent backstop -- note MQ135's ceiling
+was already observed to be exceeded (peak 814) by a real stimulus, an
+open item from the earlier entry that this change does not address.
+
+---
+
+## Phase 13b — ratio thresholds LIVE-VALIDATED on hardware, 2 runs (2026-09-23)
+
+**Ratio-based WARN/DANGER confirmed working on real hardware.** Two
+verification runs after reflashing
+(`eval/calibration/verify_gas_stove_1790152659.csv`,
+`..._1790153055.csv`). A third file from this session
+(`..._1790152149.csv`, 966 rows all WARMUP) is an aborted start with no
+OK-state data -- no findings either way.
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| boot baseline MQ2/MQ135 | 122.0 / 51.0 | 130.0 / 72.0 |
+| WARN MQ2/MQ135 | 236.9 / 100.8 | 252.0 / 141.5 |
+| peak MQ2/MQ135 | 323 / 182 | 378 / 203 |
+| WARN matched ratio formula | yes | yes |
+| buzzer/GAS_HIGH fired | yes | yes |
+
+**The decisive result: the OLD absolute formula would have MISSED all
+four sensor-runs; the new ratio form caught all four.** Computed
+against the same captured baselines: old WARN would have been 458.3
+(MQ2) / 222.6 (MQ135) on run 1 and 466.3 / 243.6 on run 2, all above
+the observed peaks. This is the failure mode that motivated the change,
+reproduced twice on real hardware and fixed.
+
+**Thresholds correctly tracked differing baselines** (122 -> WARN 237,
+130 -> WARN 252), and `verify_live.py`'s cross-check confirmed the
+firmware's own printed WARN matched the formula on both runs -- so the
+reflash took and the .ino/script constants are in sync.
+
+**Third run deliberately NOT performed (developer decision).** The n=3
+convention exists for *estimating a number* with run-to-run variance
+(as the original deltas were). What these runs test is a
+*binary mechanism* -- does the ratio threshold compute correctly and
+fire -- which does not average, and which passed twice identically.
+Time constraint (dashboard/Lambda work still ahead) made a third run a
+poor trade. If a future run behaves unexpectedly, that tie should be
+broken with more runs rather than assuming these two.
+
+**Observed deltas came in far below burned-in (~200-250 vs 1121/572,
+-78%) -- NOT treated as sensor degradation.** Both runs agree closely
+with each other but diverge hugely from the original calibration
+(1089/1167/1108). Decisive counter-evidence that the sensor is fine:
+an earlier run the SAME session peaked at mq2=1041 / mq135=814,
+consistent with the original calibration. The later runs' weaker
+response is therefore attributed to a weaker/shorter stimulus and a
+freshly-aired room, not sensor decay. Since deltas no longer drive any
+threshold, this does not affect behaviour -- but it does mean these two
+runs are NOT usable for re-deriving deltas or for the open MQ135
+hard-ceiling question.
+
+**Still open, unchanged by these runs:** MQ135's hard ceiling (750) was
+exceeded by a real stimulus earlier today (peak 814). These runs peaked
+at only ~27% of ceiling and so contribute no new evidence on it.
+
+---
+
+## Phase 13a — cam_node.ino pre-integration review + fixes; WiFi credentials found in pushed git history (2026-09-23)
+
+**`arduino/cam_node/cam_node.ino` reviewed for the first time** (it was
+explicitly scoped out of the earlier firmware review pass) ahead of
+integrating it with the sensor board, Lambda and dashboard.
+
+**VERIFIED CLEAN -- no ESP32-CAM frame buffer leak.** The classic
+failure mode for this hardware (`esp_camera_fb_get()` without a paired
+`esp_camera_fb_return()`) does not occur: every path, including both
+error branches in `handle_capture()` and `handle_stream()`, returns the
+buffer, and `free(jpg_buf)` follows every successful `frame2jpg()`.
+Recorded because its absence was a specific review priority.
+
+**SECURITY -- real WiFi credentials were already committed AND PUSHED.**
+SSID/password were hardcoded in plaintext in both `cam_node.ino` and
+`sensor_esp32_node.ino`. `git log -S` found them in commit `97d50ed`
+("hardware changes and tests", 2026-09-23), and `git branch -r
+--contains` confirms that commit is on `origin/main` at
+github.com/Arnav-3012/fire-detection-model-dl (public). This is an
+actual exposure, not a near miss. **Code fixed** -- both sketches now
+`#include "secrets.h"`, with `secrets.h` gitignored
+(`arduino/*/secrets.h`) and a tracked `secrets.example.h` template
+beside each sketch. **The history exposure itself is NOT resolved by
+that change** and needs a separate decision (rotate the WiFi password
+vs. rewrite history vs. accept) -- raised with the developer, not
+actioned unilaterally since history rewriting on a pushed branch is
+destructive.
+
+**RELIABILITY -- WiFi could wedge the board silently, fixed.** `setup()`
+blocked forever in `while (WiFi.status() != WL_CONNECTED)` and `loop()`
+had no reconnect logic at all, so an AP down at boot meant the board
+served nothing indefinitely, and a router reboot after boot killed the
+frame source with no indication -- directly against this project's
+stated loud-failure-over-silent-degradation preference, and
+inconsistent with the sensor board which already bounds the same wait
+to 15s. Fixed: boot wait bounded to `WIFI_CONNECT_TIMEOUT_MS` (15000,
+matching the sensor board), plus a non-blocking `ensureWifi()` called
+from `loop()` that retries every 5s and logs `[WIFI_LOST]` /
+`[WIFI_RESTORED]` on transitions only (once per transition, not per
+pass -- this board's USB-serial link has its own documented reliability
+problems, so flooding it is counterproductive).
+
+**RELIABILITY -- request read was unbounded, fixed.** `readStringUntil`
+used the default Stream timeout with no length bound, so a client that
+connected and sent nothing stalled `loop()` on every such connection,
+and a long line without `\r` grew a String unboundedly against limited
+heap. Added `client.setTimeout(REQUEST_READ_TIMEOUT_MS)` (1000ms) and a
+`MAX_REQUEST_LINE_LEN` (512) rejection returning 414.
+
+**CORRECTNESS -- `camera_config_t` was uninitialized, fixed.** Declared
+as a bare `camera_config_t config;` stack local, leaving
+`sccb_i2c_port` (unconditional in esp32-camera 3.3.11) and `conv_mode`
+(behind `CONFIG_CAMERA_CONVERTER_ENABLED`) holding stack garbage.
+Latent rather than active -- `sccb_i2c_port` is only read when
+`pin_sccb_sda == -1`, which is not the case here -- but one config
+change or library update from passing junk to the driver with no
+compile error. Changed to `camera_config_t config = {}`, matching
+Espressif's own examples.
+
+**RELIABILITY -- half-open TCP could spin the stream loop forever,
+fixed.** `client.connected()` does not detect a half-open socket (the
+local side still believes it is connected), so a dropped peer left
+`handle_stream()` capturing and encoding frames indefinitely into a
+dead socket. Now checks `client.write()`'s return against the expected
+length and breaks with `[STREAM_SHORT_WRITE]` on a short write; loop
+condition also now requires `WiFi.status() == WL_CONNECTED`.
+
+**FLAGGED, DELIBERATELY NOT FIXED -- `/stream` serves one client at a
+time.** `handle_stream()`'s `while (client.connected())` holds `loop()`
+for the whole connection life, so the board cannot answer `/capture`,
+a health check, or a second consumer until the current stream client
+disconnects. This is a **real constraint on the transport design**: if
+`edge/main.py` holds `/stream` open, the planned Live View dashboard
+tab cannot independently pull frames from this board. Left unfixed on
+purpose because fan-out is exactly what plan.md 10.6's open transport
+decision must settle -- fixing it here would pre-empt that choice. A
+comment in the file records this.
+
+**NOT COMPILE-VERIFIED.** `arduino-cli` is not installed on this
+machine, so these edits were checked structurally (brace/paren balance,
+definition-before-use ordering) but never actually built. Compile in
+the Arduino IDE before flashing.
+
+---

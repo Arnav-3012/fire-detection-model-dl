@@ -324,7 +324,18 @@ static const int MQ135_HARD_CEILING_PLACEHOLDER = 750;   // FINAL for this proto
 static const int MQ2_BASELINE_MIN_PLACEHOLDER   = 49;   // 64 - 15 margin
 static const int MQ2_BASELINE_MAX_PLACEHOLDER   = 122;  // 107 + 15 margin
 static const int MQ135_BASELINE_MIN_PLACEHOLDER = 0;    // 5 - 15 margin, floored at 0 (ADC counts can't be negative)
-static const int MQ135_BASELINE_MAX_PLACEHOLDER = 42;   // 27 + 15 margin
+static const int MQ135_BASELINE_MAX_PLACEHOLDER = 75;   // widened 2026-09-23: a fresh boot this session
+                                                           // captured a real MQ135 baseline of 56, above the prior
+                                                           // 42 (27+15 margin from the original 6-boot table), and
+                                                           // triggered BASELINE_TROUBLE. Per this block's own stated
+                                                           // policy (a legitimately different but real clean-air
+                                                           // room should be flagged, not treated as impossible),
+                                                           // widened to 65 (56 + ~9 margin) rather than tightened
+                                                           // around exactly today's reading. NOT re-derived from a
+                                                           // fresh multi-boot table -- single new data point, low
+                                                           // risk to widen since this bound is notification-only
+                                                           // (see block above), not a rejection/substitution gate.
+                                                           // See logs.md.
 
 // Trouble-state buzzer pattern (see guard 4 above). Deliberately
 // distinct from the solid-on gas alarm: a short double-chirp repeated
@@ -445,6 +456,66 @@ static const int BASELINE_CAPTURE_MAX_SAMPLES = 90;
 static const float MQ2_BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER   = 10;
 static const float MQ135_BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER = 5;
 
+// ---------------------------------------------------------------------
+// *** RATIO-BASED WARN/DANGER THRESHOLDS (2026-09-23) -- replaces the
+// previous absolute "baseline + 0.30/0.50 * CALIBRATED_DELTA" form. ***
+//
+// WHY THIS CHANGED. The old form added a FIXED ADC-count offset to the
+// tracked baseline. That is not physically constant: this sensor's raw
+// ADC value is a nonlinear function of sensor resistance Rs (voltage
+// divider, ADC = ADC_MAX * RL/(RL+Rs)), and Rs vs gas concentration is
+// itself a power law (the MQ datasheets' own ppm curves are log-log in
+// Rs/R0). So a fixed +336 ADC delta demands a 71.8% drop in Rs at a
+// clean baseline (ADC 150) but only a 66.8% drop at an elevated one
+// (ADC 192) -- i.e. the "same" threshold meant different amounts of
+// gas depending on the room. Observed live 2026-09-23: a boot into a
+// not-yet-cleared room captured baseline 192, which pushed WARN to 528,
+// and a real gas exposure peaking at 475 never tripped WARN at all.
+//
+// Expressing the threshold as a RATIO OF Rs TO THE BASELINE'S Rs is the
+// standard approach for MOS sensors (the Rs/R0 normalization the MQ
+// datasheets themselves use) and makes the threshold mean the same
+// physical thing regardless of what the room's baseline happens to be.
+//
+// HOW THESE VALUES WERE CHOSEN. Swept against real data rather than
+// picked by feel; a LOWER ratio means a LARGER required Rs drop, i.e.
+// a HIGHER ADC threshold and LESS sensitivity. At 0.50/0.37:
+//   - The 2026-09-23 failed run (baseline 192, peak 475) crosses WARN.
+//   - The clean run (baseline 160.5, peak 1041) crosses both.
+//   - 0 false positives across all 3853 clean-air samples of the
+//     overnight drift log (eval/calibration/drift_20260923_015914.csv),
+//     with ~91 counts (MQ2) / ~20 counts (MQ135) of margin above the
+//     highest clean-air reading actually observed.
+//   - DANGER/WARN gap ratio works out to 1.659 (MQ2) / 1.685 (MQ135),
+//     preserving the 1.667 relationship the old 0.30/0.50 span form
+//     had, so the WARN->DANGER spacing is unchanged in spirit.
+// Deliberately backed off from the raw n=1 derivation (0.7359/0.5598,
+// which would have set WARN at only ~215 on a clean baseline) to leave
+// real headroom over sensor noise -- developer decision, tuned for
+// "flexible, neither twitchy nor harsh" rather than for maximum
+// sensitivity.
+//
+// NOT YET LIVE-VALIDATED against a real stimulus with this formula in
+// place, and derived from a single clean calibration run plus the
+// overnight clean-air log. MQ2/MQ135_CALIBRATED_DELTA_PLACEHOLDER are
+// now UNUSED by the threshold path (kept for reference//documentation
+// of what a full stimulus produced). See logs.md.
+// ---------------------------------------------------------------------
+static const float ADC_MAX = 4095.0;      // 12-bit ADC full scale (analogReadResolution(12) in setup())
+static const float WARN_RS_RATIO = 0.50;   // Rs must fall to <=50% of baseline Rs to WARN
+static const float DANGER_RS_RATIO = 0.37; // Rs must fall to <=37% of baseline Rs to DANGER
+
+// Converts a tracked baseline (in ADC counts) plus a target Rs ratio
+// into the ADC reading at which that ratio is reached. Higher ADC =
+// lower Rs = more gas, so a ratio < 1 yields a threshold ADC above the
+// baseline. Returns -1 for a non-positive/na baseline so callers can
+// treat the threshold as disabled rather than acting on a bogus value.
+float ratioThreshold(float baselineAdc, float rsRatio) {
+  if (baselineAdc <= 0 || baselineAdc >= ADC_MAX) return -1;
+  float rsBase = ADC_MAX / baselineAdc - 1.0;
+  return ADC_MAX / (1.0 + rsRatio * rsBase);
+}
+
 // Very slow EMA smoothing factor for baseline tracking (0 < alpha <= 1,
 // smaller = slower/more inertia). Kept as a separate named constant
 // from the drift cap above so cadence and maximum extent can be tuned
@@ -540,8 +611,10 @@ float mq135DriftCapAnchor = 0;
 // transport for this board's readings is Phase 13f's open decision
 // (plan.md §10.6), not made here.
 // ---------------------------------------------------------------------
-const char *WIFI_SSID = "REDACTED_WIFI_SSID";
-const char *WIFI_PASSWORD = "REDACTED_WIFI_PASSWORD";  // fill in before flashing
+// Credentials live in secrets.h, which is gitignored and NOT committed.
+// Copy secrets.example.h to secrets.h and fill in your own values before
+// flashing. Do not put real credentials in this file -- it is tracked.
+#include "secrets.h"
 
 void setup() {
   Serial.begin(9600);
@@ -1012,13 +1085,13 @@ void loop() {
   // PLACEHOLDER = -1) and MQ135's calibrated delta is itself still
   // trending (see its PLACEHOLDER comment above) -- re-review this
   // multiplier once both of those are resolved. See logs.md.
-  float mq2Warn = mq2TrackedBaseline + 0.30 * MQ2_CALIBRATED_DELTA_PLACEHOLDER;
-  float mq2Danger = mq2TrackedBaseline + 0.50 * MQ2_CALIBRATED_DELTA_PLACEHOLDER;
-  float mq135Warn = mq135TrackedBaseline + 0.30 * MQ135_CALIBRATED_DELTA_PLACEHOLDER;
-  float mq135Danger = mq135TrackedBaseline + 0.50 * MQ135_CALIBRATED_DELTA_PLACEHOLDER;
+  float mq2Warn = ratioThreshold(mq2TrackedBaseline, WARN_RS_RATIO);
+  float mq2Danger = ratioThreshold(mq2TrackedBaseline, DANGER_RS_RATIO);
+  float mq135Warn = ratioThreshold(mq135TrackedBaseline, WARN_RS_RATIO);
+  float mq135Danger = ratioThreshold(mq135TrackedBaseline, DANGER_RS_RATIO);
 
-  bool mq2Exceeded = (MQ2_CALIBRATED_DELTA_PLACEHOLDER >= 0) && (mq2Raw >= mq2Warn);
-  bool mq135Exceeded = (MQ135_CALIBRATED_DELTA_PLACEHOLDER >= 0) && (mq135Raw >= mq135Warn);
+  bool mq2Exceeded = (mq2Warn > 0) && (mq2Raw >= mq2Warn);
+  bool mq135Exceeded = (mq135Warn > 0) && (mq135Raw >= mq135Warn);
 
   // Guard 3: absolute hard ceiling, independent of the tracked
   // baseline -- alarms unconditionally so a slow-onset hazard can

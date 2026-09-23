@@ -27,26 +27,43 @@ from pathlib import Path
 ALPHA = 0.001  # BASELINE_EMA_ALPHA
 ANCHOR_INTERVAL_S = 3600  # re-anchor cadence, matches millis() - lastDriftCapCheckMs >= 3600000UL
 
-WARN_MULT = 0.30  # matches mq*Warn = baseline + 0.30 * delta in the firmware
+ADC_MAX = 4095.0
+WARN_RS_RATIO = 0.50  # matches WARN_RS_RATIO in sensor_esp32_node.ino
 
-# ramp_total is set to 1.5x the WARN gap (0.30*delta) so the ramp alone,
-# if fully absorbed into the baseline (cap OFF), comfortably would have
-# reached WARN -- otherwise "WARN never crossed" is meaningless: it could
-# mean the cap is working, or just that the ramp was too small to ever
-# reach WARN regardless of the cap. An earlier version of this script
-# used a fixed ramp_total=50/25 without checking this and produced a
-# "never crossed" result under BOTH cap ON and cap OFF -- not a finding,
-# just an undersized ramp (only ~15% of the WARN gap). See logs.md.
+
+def ratio_threshold(baseline_adc, rs_ratio=WARN_RS_RATIO):
+    """Port of ratioThreshold() in sensor_esp32_node.ino.
+
+    WARN/DANGER became ratio-based (Rs relative to the baseline's Rs)
+    on 2026-09-23, replacing the old baseline + 0.30*delta form -- see
+    that file's RATIO-BASED WARN/DANGER THRESHOLDS block for why.
+    """
+    if baseline_adc <= 0 or baseline_adc >= ADC_MAX:
+        return -1
+    rs_base = ADC_MAX / baseline_adc - 1.0
+    return ADC_MAX / (1.0 + rs_ratio * rs_base)
+
+# ramp_total is sized to 1.5x the WARN gap at this sensor's starting
+# baseline so the ramp alone, if fully absorbed into the baseline
+# (cap OFF), comfortably would have reached WARN -- otherwise "WARN
+# never crossed" is meaningless: it could mean the cap is working, or
+# just that the ramp was too small to ever reach WARN regardless of the
+# cap. An earlier version used a fixed ramp_total=50/25 without checking
+# this and produced "never crossed" under BOTH cap ON and cap OFF --
+# not a finding, just an undersized ramp. See logs.md.
+_MQ2_BASE, _MQ135_BASE = 140, 40
 SENSORS = {
-    "mq2": dict(baseline0=140, delta=1121, cap=10, ramp_total=1.5 * 0.30 * 1121, ramp_hours=2, noise=4),
-    "mq135": dict(baseline0=40, delta=572, cap=5, ramp_total=1.5 * 0.30 * 572, ramp_hours=2, noise=2),
+    "mq2": dict(baseline0=_MQ2_BASE, cap=10, ramp_hours=2, noise=4,
+                ramp_total=1.5 * (ratio_threshold(_MQ2_BASE) - _MQ2_BASE)),
+    "mq135": dict(baseline0=_MQ135_BASE, cap=5, ramp_hours=2, noise=2,
+                  ramp_total=1.5 * (ratio_threshold(_MQ135_BASE) - _MQ135_BASE)),
 }
 
 
-def step(baseline, anchor, anchor_tick, t, raw, delta, cap, cap_enabled):
+def step(baseline, anchor, anchor_tick, t, raw, cap, cap_enabled):
     """One simulated tick, in the same order as loop() in the .ino."""
-    warn = baseline + WARN_MULT * delta
-    exceeded = raw >= warn
+    warn = ratio_threshold(baseline)
+    exceeded = (warn > 0) and (raw >= warn)
 
     # Guard 1: EMA update only when NOT exceeded.
     if not exceeded:
@@ -82,7 +99,7 @@ def simulate_ramp(cfg, cap_enabled, seed=0):
         raw = cfg["baseline0"] + ramp + rng.uniform(-cfg["noise"], cfg["noise"])
 
         baseline, anchor, anchor_tick, warn, exceeded, _ = step(
-            baseline, anchor, anchor_tick, t, raw, cfg["delta"], cfg["cap"], cap_enabled
+            baseline, anchor, anchor_tick, t, raw, cfg["cap"], cap_enabled
         )
         if warn_cross_tick is None and exceeded:
             warn_cross_tick = t
@@ -104,7 +121,7 @@ def simulate_real_log(cfg, csv_path, column):
             raw = int(row[column])
             t = total_ticks
             baseline, anchor, anchor_tick, warn, exceeded, clamped = step(
-                baseline, anchor, anchor_tick, t, raw, cfg["delta"], cfg["cap"], True
+                baseline, anchor, anchor_tick, t, raw, cfg["cap"], True
             )
             if clamped:
                 clamp_events += 1

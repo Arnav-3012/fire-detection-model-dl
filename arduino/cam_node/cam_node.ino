@@ -77,8 +77,10 @@
 // (hardcoded credentials) so the RGB565->JPEG path can be verified in
 // isolation first.
 // ---------------------------------------------------------------------
-const char *WIFI_SSID = "REDACTED_WIFI_SSID";
-const char *WIFI_PASSWORD = "REDACTED_WIFI_PASSWORD";  // fill in before flashing
+// Credentials live in secrets.h, which is gitignored and NOT committed.
+// Copy secrets.example.h to secrets.h and fill in your own values before
+// flashing. Do not put real credentials in this file -- it is tracked.
+#include "secrets.h"
 
 // JPEG quality passed to frame2jpg (0-63, lower = higher quality/larger
 // file — matches the stock example's own working value for this frame
@@ -86,6 +88,49 @@ const char *WIFI_PASSWORD = "REDACTED_WIFI_PASSWORD";  // fill in before flashin
 static const int JPEG_QUALITY = 12;
 
 WiFiServer server(80);
+
+// WiFi resilience (2026-09-23). Previously setup() blocked forever on
+// WL_CONNECTED and loop() had no reconnect at all, so a router reboot
+// or transient AP drop left the board serving nothing, indefinitely,
+// with no indication -- edge/main.py's frame source would simply go
+// dead. This project's stated preference is loud failure over silent
+// degradation, so the wait is now bounded and reconnection is retried
+// on a fixed interval with a serial line each time.
+static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;  // matches sensor_esp32_node.ino
+static const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;    // between reconnect attempts in loop()
+static const unsigned long REQUEST_READ_TIMEOUT_MS = 1000;   // cap on reading the HTTP request line
+static const unsigned int MAX_REQUEST_LINE_LEN = 512;        // reject longer request lines outright
+static unsigned long lastWifiRetryMs = 0;
+static bool wifiWasConnected = false;
+
+// Keeps WiFi up without ever blocking loop(). Returns true if currently
+// connected. Logs each transition (down/restored) exactly once rather
+// than every pass, so a long outage doesn't flood the serial line --
+// which matters here because this board's USB-serial link has its own
+// documented reliability problems (see logs.md).
+static bool ensureWifi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiWasConnected) {
+      wifiWasConnected = true;
+      Serial.print("[WIFI_RESTORED] reconnected, IP: ");
+      Serial.println(WiFi.localIP());
+    }
+    return true;
+  }
+
+  if (wifiWasConnected) {
+    wifiWasConnected = false;
+    Serial.println("[WIFI_LOST] connection dropped -- retrying, no frames can be served until restored");
+  }
+
+  unsigned long now = millis();
+  if (now - lastWifiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
+    lastWifiRetryMs = now;
+    WiFi.disconnect();
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------
 // Narrow-FOV fix (2026-09-16) — Option B: runtime register poke, not a
@@ -182,7 +227,14 @@ static void widen_fov_qvga() {
 }
 
 static bool camera_init() {
-  camera_config_t config;
+  // Zero-initialize: camera_config_t has fields this sketch does not
+  // set (sccb_i2c_port, and conv_mode when CONFIG_CAMERA_CONVERTER_ENABLED
+  // is on). Left as a bare declaration these hold stack garbage. It is
+  // currently latent -- sccb_i2c_port is only read when pin_sccb_sda is
+  // -1, which it isn't here -- but it is one config change or library
+  // update away from passing junk to the driver with no compile error.
+  // Espressif's own examples zero-init for exactly this reason.
+  camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
   config.pin_d0 = Y2_GPIO_NUM;
@@ -295,7 +347,15 @@ static void handle_stream(WiFiClient &client) {
   client.println("Content-Type: multipart/x-mixed-replace;boundary=frame");
   client.println();
 
-  while (client.connected()) {
+  // NOTE (2026-09-23): this loop holds loop() for the entire life of the
+  // connection, so this board serves exactly ONE stream client at a time
+  // and cannot answer anything else -- including /capture or a health
+  // check -- until that client disconnects. That is a real constraint on
+  // how frames get fanned out to both edge/main.py and the planned Live
+  // View dashboard tab; it is deliberately NOT solved here, because the
+  // transport/fan-out design is an open decision (plan.md 10.6). Bounded
+  // below only so a wedged or half-open client cannot spin forever.
+  while (client.connected() && WiFi.status() == WL_CONNECTED) {
     unsigned long capture_start_ms = millis();
     camera_fb_t *fb = esp_camera_fb_get();
     unsigned long capture_ms = millis() - capture_start_ms;
@@ -327,7 +387,7 @@ static void handle_stream(WiFiClient &client) {
     client.println("Content-Type: image/jpeg");
     client.printf("Content-Length: %u\r\n", (unsigned)jpg_len);
     client.println();
-    client.write(jpg_buf, jpg_len);
+    size_t written = client.write(jpg_buf, jpg_len);
     client.println();
     unsigned long send_ms = millis() - send_start_ms;
     free(jpg_buf);
@@ -335,8 +395,21 @@ static void handle_stream(WiFiClient &client) {
     Serial.printf("stream frame: capture=%lums convert=%lums send=%lums total=%lums\n",
                   capture_ms, convert_ms, send_ms, capture_ms + convert_ms + send_ms);
 
+    // A short write means the peer is gone or the socket is half-open.
+    // client.connected() alone does NOT catch half-open TCP (the local
+    // side still believes it is connected), which would leave this loop
+    // capturing and encoding frames forever into a dead socket, burning
+    // CPU and blocking every other client.
+    if (written != jpg_len) {
+      Serial.printf("[STREAM_SHORT_WRITE] wrote %u of %u bytes -- client gone, closing stream\n",
+                    (unsigned)written, (unsigned)jpg_len);
+      break;
+    }
+
     if (!client.connected()) break;
   }
+
+  Serial.println("[STREAM_END] stream client disconnected, board free to accept new connections");
 }
 
 void setup() {
@@ -368,26 +441,57 @@ void setup() {
   // re-attempt jpgSetRgb565BE(false) without new evidence it was wrong to
   // rule out.
 
+  // Bounded, not infinite. An unbounded wait here wedges the board
+  // silently and forever if the AP is down at boot -- no frames, no
+  // error, nothing but endless dots on a serial line nobody is
+  // watching. Matches sensor_esp32_node.ino's 15s bound and its
+  // explicit "say so and carry on" behaviour; ensureWifi() in loop()
+  // keeps retrying, so a failure here is a delay, not a dead board.
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
+  unsigned long wifiStartMs = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStartMs < WIFI_CONNECT_TIMEOUT_MS) {
     delay(500);
     Serial.print(".");
   }
   Serial.println();
-  Serial.print("Connected, IP: ");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Connected, IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi NOT connected at boot -- will keep retrying in loop(); no frames can be served until it connects");
+  }
   Serial.println("Endpoints: GET /capture (single JPEG), GET /stream (MJPEG)");
 
   server.begin();
 }
 
 void loop() {
+  if (!ensureWifi()) {
+    delay(50);  // nothing can be served while down; don't spin hot
+    return;
+  }
+
   WiFiClient client = server.available();
   if (!client) return;
 
+  // Bound the request read. Without this, a client that connects and
+  // sends nothing (port scanner, browser preconnect, half-open TCP)
+  // stalls loop() for the full default Stream timeout on every such
+  // connection, stealing time from the real frame consumer.
+  client.setTimeout(REQUEST_READ_TIMEOUT_MS);
   String request_line = client.readStringUntil('\r');
   client.readStringUntil('\n');  // consume trailing \n after readStringUntil('\r')
+
+  // A well-formed request line is short; anything longer is malformed
+  // or hostile, and String growth is unbounded against limited heap.
+  if (request_line.length() > MAX_REQUEST_LINE_LEN) {
+    Serial.printf("[BAD_REQUEST] request line %u bytes, rejecting\n", (unsigned)request_line.length());
+    client.println("HTTP/1.1 414 URI Too Long");
+    client.println();
+    client.stop();
+    return;
+  }
 
   if (request_line.indexOf("GET /capture") >= 0) {
     handle_capture(client);
