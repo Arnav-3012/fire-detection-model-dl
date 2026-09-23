@@ -108,7 +108,9 @@ firewatch/
 │
 ├── eval/                  # adversarial videos, threshold sweeps, trial logging
 ├── scripts/                # data capture / scraping / review helpers
+├── logs/                   # gitignored — local hardware trial logs + archived/superseded snapshots
 │
+├── ARCHITECTURE.md          # system map + which doc/log/data file to use when
 ├── plan.md                 # full specification and rationale
 ├── info.md                 # operating rules (safety, quality bars, standards)
 ├── logs.md                 # append-only build log — every measured result, ever
@@ -362,6 +364,7 @@ above:
 
 | Document | What's in it |
 |---|---|
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | System map + full guide to which doc/log/data file to use for a given task |
 | [`plan.md`](plan.md) | Full specification: architecture rationale, hardware BOM and pin map, data collection plan, day-by-day schedule, troubleshooting appendix |
 | [`info.md`](info.md) | Operating rules: absolute safety constraints, code standards, quality bars, when to stop and ask |
 | [`context.md`](context.md) | Fast-recovery summary of current state — read this first if picking the project back up |

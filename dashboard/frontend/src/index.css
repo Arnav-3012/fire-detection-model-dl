@@ -497,6 +497,12 @@ body {
   gap: 9px;
 }
 
+.panel-title-subtitle {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
 .panel-title svg {
   width: 15px;
   height: 15px;

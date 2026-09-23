@@ -76,6 +76,21 @@ A network failure, timeout, or exception must **never** prevent or delay the loc
 alarm. This is the core architectural claim of the project. Do not reorder it, do
 not wrap the local alarm in a network-dependent branch, do not "optimise" it.
 
+**Scope clarification (resolved 2026-09-09):** this principle applies specifically
+to **GAS-based detection** (MQ-2/MQ-135 readings). Gas thresholds are evaluated on
+the ESP32 every loop, independent of WiFi/Lambda connectivity state, and drive the
+buzzer directly via local GPIO — never gated on a pending or failed network call,
+exactly as originally specified. **Vision-based detection is explicitly excluded
+from this local-first guarantee**, because it is architecturally cloud-dependent
+by design: a camera frame cannot produce a Lambda inference result without a
+network round-trip, and no local (on-device TinyML) alternative was ever a design
+candidate for it (ruled out on memory/compute grounds — see plan.md §10.2). This is
+a disclosed narrowing of the principle's scope, not a weakening of it: gas-based
+detection retains the full local, no-network guarantee unchanged. On total WiFi
+loss, the system degrades to gas-only/local-only detection (see plan.md §10.5),
+which is consistent with — not a violation of — this principle under the scope
+above.
+
 ### 2.3 The LLM never decides whether there is a fire
 
 - Detection is deterministic: model output → threshold → temporal vote → fusion table.

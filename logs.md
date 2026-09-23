@@ -8687,3 +8687,3265 @@ retraining detour. **Phase 11 evaluation trials
 `eval/run_trial.py`) is the next priority** — the trial helper is
 built and idle, and every trial should run on whichever model is in
 `models/fire_mnv3.onnx` at that point, so settle the promotion first.
+
+## Phase 11 — evaluation trial plan reduced to 12 (6 hazard / 6 non-hazard)
+**Date:** 2026-09-05
+**Status:** DOCUMENTED, trials NOT YET RUN (logging/tracking only)
+
+### What was decided
+
+Given real time constraints ahead of the 7 September 2026 deadline, the
+developer deliberately scaled the Phase 11 evaluation set down from
+info.md 4.4's ≥20 hazard + ≥20 non-hazard minimum to a smaller, still
+class-balanced **12-trial set (6 hazard, 6 non-hazard)**. This is an
+explicit, reasoned reduction — not an oversight — and must be disclosed
+as such in the final report wherever trial results are written up,
+alongside the original 4.4 target for comparison.
+
+The 12 trials were chosen to each exercise a distinct fusion rule or a
+specific documented finding already on record, rather than repeat the
+same few code paths 20+ times:
+
+- Trials 1, 2, 5 exercise the core WARNING→CRITICAL escalation path
+  (vision alone vs. vision+gas agreement, both gas sensors).
+- Trials 3, 4, 6 exercise the gas-alone / vision-disagreement path —
+  6 specifically re-confirms that gas alone can never falsely escalate
+  to CRITICAL without vision agreement (fusion rule 3's non-escalation
+  guarantee).
+- Trials 7-9 are baseline/adversarial SAFE checks already established
+  in Phase 5 (empty room, person in frame, red clothing).
+- Trial 10 re-verifies the TV/laptop-fire known limitation (Phase 5)
+  is still bounded to WARNING (never CRITICAL) under the newly-promoted
+  v4 model — confirming fusion rule 4's vision-only cap still holds.
+- Trial 11 re-verifies the v4 smoke-recall fix under live conditions —
+  the exact bright-light/textured-wall scenario that triggered the
+  2026-09-04 investigation and the v4 retrain (see "Phase 2 addendum —
+  v4 promotion decision"), now expected SAFE instead of the v3 WATCH
+  lock.
+- Trial 12 is a general lighting-robustness sanity check (lamp on/off,
+  window light, ambient shifts).
+
+Trials 10 and 11 are the two highest-value trials in this reduced set:
+they are live re-verifications of, respectively, an accepted known
+limitation and a bug fix that was the subject of an entire retraining
+detour (Phases -16/-17 in context.md's decision log) — both must be
+confirmed under the model that is actually in production
+(`models/fire_mnv3.onnx`, v4 as of 2026-09-05), not just on the
+held-out clip used during the retrain investigation.
+
+### Gas-sensor warm-up context (genuine fresh power-cycle)
+
+The MQ sensors' hardware was disconnected/unused for ~2 days; the
+developer has re-armed the full 5-minute (300s) `gas_warmup_seconds`
+gate from a genuine power-cycle — this is NOT a continuation of prior
+warm-up progress. Trials 3, 4, 5, and 6 all depend on a gas trigger and
+must not be run until the console confirms the gate has cleared
+naturally (`GATED` / `gas_high` suppressed shown, then clearing on its
+own) — the gate must not be bypassed or shortened for this run.
+
+### Where the plan lives
+
+The full 12-trial checklist (trial description, expected outcome,
+PENDING/PASS/FAIL status per trial) is recorded in `plan.md` under a
+new "Day 11 — evaluation trial plan (reduced set, 2026-09-05)"
+subsection, ahead of the existing Day 11 dashboard prompt. `plan.md` is
+the tracking surface — as each trial is run, its row status will be
+updated there from PENDING to PASS/FAIL, cross-checked against the
+matching `eval/results.csv` row (trial_id, timestamp, actual_outcome,
+detection_latency_seconds) logged by `eval/run_trial.py`. No trial is
+ever marked complete without the developer explicitly confirming it
+was run.
+
+### Open items
+- All 12 trials PENDING — none run yet. This entry is documentation/
+  tracking infrastructure only; no trials were executed as part of it.
+- Gas-dependent trials (3, 4, 5, 6) additionally blocked on the 300s
+  warm-up gate clearing naturally after the recent power-cycle.
+- Once all 12 are logged, cross-check `eval/results.csv` against the
+  expected-outcome table in `plan.md` and mark each PASS/FAIL there.
+- The 20+20 minimum from info.md 4.4 is NOT met by this reduced set —
+  the final report must state the reduction and its reasoning
+  explicitly, not present 12 trials as if they were the original target.
+
+### Next phase
+Developer runs the 12 trials via `eval/run_trial.py`, gas-dependent
+ones after the warm-up gate clears. Each result gets cross-checked
+against `plan.md`'s expected-outcome table and marked PASS/FAIL there
+and in a logs.md follow-up entry.
+
+## Phase 11 — trial run in progress + new finding: total-darkness false positive
+**Date:** 2026-09-06
+**Status:** IN PROGRESS (7 of 12 trials run so far)
+
+### What was run
+
+Non-hazard trials 7-12 run via `eval/run_trial.py` against production
+v4 (`models/fire_mnv3.onnx`). Results cross-checked against
+`eval/results.csv` and `plan.md`'s expected-outcome table:
+
+- Trial 7 (empty_room) — PASS, clean.
+- Trial 8 (person_in_frame) — first attempt invalidated (flashlight
+  accidentally held close to camera, not a genuine trial condition,
+  logged WARNING). Clean rerun (`person_in_frame_v2`) split across two
+  immediate runs: first logged WATCH (FAIL), second logged SAFE (PASS)
+  with no deliberate change in conditions — marked PASS but flagged as
+  borderline/non-repeatable, not a clean pass.
+- Trial 9 (red_clothing) — first attempt invalidated (cloth held very
+  close to the camera, not the established "person wearing red
+  clothing at normal distance" scenario from plan.md §6/info.md 4.2;
+  logged WARNING). Clean rerun at normal distance logged SAFE (PASS),
+  consistent with v1-v4 history on this scenario.
+- Trial 10 (tv_fire_adversarial) — PASS, clean, WARNING at 1.86s,
+  confirms the v4 fusion rule-4 cap still holds (no CRITICAL escalation).
+- Trial 11 (bright_wall_v4_recheck) — first attempt logged WARNING at
+  11.4s (FAIL); developer identified cause as camera autofocus still
+  hunting at trial start, producing transient blur on the textured wall
+  — a camera-startup artifact, not a model regression. Clean rerun held
+  SAFE throughout (PASS) — **this is the live confirmation that the v4
+  smoke-recall retrain (Phases -16/-17) actually holds**, the highest-
+  value result in this trial set.
+- Trial 12 (lighting_changes) — genuine FAIL, see finding below.
+
+Config note: `gas_warmup_seconds` temporarily dropped 240 -> 60 for
+today's trial session only (developer instruction, sensors already
+warmed up continuously across today's runs) — **must be restored to
+240 before/after the gas-dependent trials (3-6) are complete.** Root
+cause of why the gate shows GATED on every trial run identified: each
+`eval/run_trial.py` invocation launches a fresh `edge/main.py`
+subprocess, and `SensorReader._first_reading_monotonic` is in-process
+state, never persisted — so the warm-up clock restarts from zero on
+every trial regardless of how long the physical sensor has actually
+been powered. Not fixed (would require persisting the timestamp across
+restarts, a touch to the safety-critical loop needing a live FPS/buzzer
+re-check per this project's standing rule) — accepted as a known
+trial-tooling limitation for now, worked around by keeping the gate at
+60s and waiting it out each run.
+
+### New adversarial finding: total darkness produces a false WARNING
+
+Trial 12's genuine failure: with the room in complete darkness (no
+light at all), `p_fire` climbed steadily 0.29 -> 0.96 over roughly 4
+seconds, reached 5-of-8 temporal votes, and fired a real local alarm —
+`*** LOCAL ALARM ON — WARNING: visual flame, unconfirmed by sensors ***`
+— with `gas_high=False` throughout (mq2=76-78, mq135=60-61, both near
+baseline, confirming this is NOT a gas-side issue). The alarm held for
+roughly 40+ seconds (votes saturated at 8/8) before self-de-escalating
+back to SAFE as votes decayed once the room was no longer fully dark.
+Detection latency to WARNING: 86.5s from trial start (the darkness
+itself was introduced partway through the trial, not at t=0).
+
+This is a genuine vision-side false positive, not a harness/invalid-
+trial artifact (unlike the flashlight and close-up-cloth incidents
+above) — the model itself voted fire with high confidence in a
+low-light/no-light frame. Likely cause, not yet confirmed: production
+v4's training data (18,678 train images across 8 categories, per
+context.md) probably contains few or no true near-black/heavily
+underexposed negative frames, so a webcam's auto-exposure gain noise/
+grain in total darkness may visually resemble fire-like texture to the
+model. This is **distinct from and unrelated to** the bright-light/
+textured-wall issue that drove the v4 retrain (Phases -14 through -17)
+— opposite lighting extreme, and the mechanism is very likely different
+(underexposure noise vs. a specific textured/patterned background
+misread as smoke).
+
+Ordinary lighting variation with the room otherwise lit (lamp on/off,
+walking past a window, ambient shifts short of total darkness) did NOT
+reproduce this — SAFE held correctly through those portions of the
+same trial. The failure is specific to sustained total darkness.
+
+**Not fixed on the spot** — no retrain, no threshold tuning, no code
+change made in response to this finding; recorded as a new, previously
+undocumented open item / known limitation for the final report.
+
+### Open items
+- **NEW: total-darkness false-positive WARNING (this entry)** — needs
+  a documented limitation entry in the final report alongside the
+  existing TV-fire and steam-WATCH limitations. Root cause (auto-
+  exposure noise in near-black frames) is a hypothesis, not confirmed —
+  would need a dedicated all-dark adversarial clip + eval run to
+  characterize properly if time permits before the deadline; otherwise
+  report as observed-once, mechanism suspected but unconfirmed.
+- Trial 8's borderline WATCH/SAFE split on back-to-back identical-
+  condition runs is unresolved — noted in plan.md, not re-run a third
+  time. Consider re-running once if time allows, otherwise report as
+  observed non-repeatability under near-threshold smoke-vote conditions.
+- `gas_warmup_seconds` still at 60 (temporary) — MUST be restored to
+  240 once gas trials (3-6) are complete today.
+- Remaining trials not yet run: 1, 2, 3, 4, 5, 6 (all hazard trials,
+  3-6 gas-dependent, blocked on the warm-up gate clearing per run).
+- SensorReader's per-process (non-persisted) first-reading timestamp is
+  a known trial-tooling gap — not a production issue (a real deployment
+  never restarts the process mid-operation), but worth a one-line note
+  in the final report's methodology section if the trial log's repeated
+  GATED windows would otherwise look confusing.
+
+### Next phase
+Continue with remaining hazard trials 1-6, gas-dependent ones (3-6)
+run only after the warm-up gate clears each time. Restore
+`gas_warmup_seconds` to 240 once 3-6 are done. Cross-check final
+`eval/results.csv` against `plan.md`'s table once all 12 are attempted,
+and fold the total-darkness finding plus trial 8's borderline result
+into the final report's limitations section.
+
+## Phase 11 — 12-trial evaluation run CLOSED
+**Date:** 2026-09-06
+**Status:** COMPLETE — 11/12 PASS, 1 documented new limitation
+
+### What was run
+
+All 12 trials from the reduced Phase 11 plan (plan.md "Day 11 —
+evaluation trial plan (reduced set, 2026-09-05)") completed against
+production v4 (`models/fire_mnv3.onnx`), each cross-checked against its
+`eval/results.csv` row and marked in `plan.md`'s table:
+
+| # | Trial | Result |
+|---|---|---|
+| 1 | Fire video alone, no gas | PASS |
+| 2 | Fire video + gas-stove (MQ-2) | PASS — see hardware finding below |
+| 3 | Gas-stove alone, neutral view | PASS |
+| 4 | Alcohol/MQ-135 alone, neutral view | PASS — see camera-glitch finding below |
+| 5 | Fire video + alcohol/MQ-135 | PASS, clean single attempt |
+| 6 | Gas-stove, camera pointed away | PASS, clean single attempt — confirms gas-alone never escalates to CRITICAL without vision agreement |
+| 7 | Empty room | PASS, clean |
+| 8 | Person in frame | PASS — borderline WATCH/SAFE split across two identical-condition reruns, see prior entry |
+| 9 | Red clothing | PASS — first attempt invalidated (cloth held too close to camera), clean rerun at proper distance passed |
+| 10 | TV/laptop fire | PASS — known limitation (WARNING, not CRITICAL) reconfirmed on v4 |
+| 11 | Bright wall / v4 smoke-recall recheck | PASS — first attempt's brief WARNING traced to camera autofocus hunting at trial start (developer-identified), clean rerun held SAFE throughout |
+| 12 | Lighting changes | **FAIL — genuine new finding, not invalidated** |
+
+**Result: 11 of 12 trials PASS.** This is below the original info.md
+4.4 minimum of ≥20+≥20 by design (see the 2026-09-05 reduction entry) —
+the final report must state this plainly, not present 12 as if it were
+the target.
+
+### Hardware finding: buzzer silent on first CRITICAL trial (trial 2)
+
+First attempt at trial 2 correctly computed and logged CRITICAL (fusion,
+vision, and gas logic all correct — `*** LOCAL ALARM ON ***` transition
+fired as expected) but the physical buzzer did not audibly sound.
+Traced by the developer to a **loose wiring connection on the buzzer
+circuit at D8** (confirmed against `arduino/sensor_node/sensor_node.ino`:
+`BUZZER_PIN = 8`, matching plan.md 5.2's pin map) — not a code, fusion,
+or serial-write bug (no "alarm byte NOT sent" warning appeared in the
+console, meaning `SensorReader.set_alarm()`'s serial write path was
+healthy throughout). Reseated the connection; rerun logged CRITICAL
+again with the buzzer audibly sounding. **Report as a hardware-
+reliability finding:** a loose D8 connection can silently defeat the
+local alarm even when detection and fusion are functioning correctly —
+worth a line in the final report's limitations/reliability section,
+and a reminder to physically re-check the buzzer wiring before any
+future demo.
+
+### New pattern: camera autofocus/exposure glitches transiently inflate p_fire
+
+Observed twice independently — trial 11's first attempt (WARNING at
+11.4s during what should have been a SAFE bright-wall recheck) and
+trial 4's first attempt (escalated all the way to CRITICAL at 110.7s
+despite a neutral camera view with no fire-like content). Both were
+developer-identified as camera artifacts (autofocus hunting / exposure
+transients) at trial start, not fusion or model regressions — both
+resolved cleanly on immediate reruns once the camera had settled.
+**This is a recurring nuisance worth documenting as a known limitation:**
+the webcam's autofocus/exposure transients can occasionally produce a
+sustained-enough false vision-fire signal to clear the 5-of-8 temporal
+vote threshold, and in trial 4's case combined with a genuine gas
+trigger to reach CRITICAL. Practical mitigation for future runs: let
+the camera sit still for a few seconds before starting a trial so
+autofocus settles. Not fixed at the model/fusion level — recorded as
+an open item, not remediated.
+
+### New adversarial finding: total darkness → false WARNING (trial 12, genuine FAIL)
+
+Already logged in the prior entry ("Phase 11 — trial run in progress +
+new finding: total-darkness false positive") — carried forward here as
+the run's one confirmed, unresolved FAIL. `p_fire` climbed 0.29 -> 0.96
+over ~4 seconds in complete darkness, reached 5/8 votes, fired a real
+WARNING (`gas_high=False` throughout, ruling out gas involvement), then
+self-de-escalated once light returned. Distinct from the bright-wall
+issue that drove the v4 retrain (opposite lighting extreme). Not fixed
+in this session — stands as a genuine, previously undocumented
+limitation for the final report.
+
+### Config housekeeping
+
+`gas_warmup_seconds` restored from the temporary 60 back to its correct
+**240** now that all gas-dependent trials (2, 3, 4, 5, 6) are complete —
+confirmed in `config.yaml`. The per-process (non-persisted) warm-up
+timer gap noted in the prior entry (`SensorReader._first_reading_monotonic`
+resets on every `edge/main.py` restart) remains an un-fixed trial-
+tooling limitation, not touched this session — worth a one-line
+methodology note in the final report if the repeated GATED windows in
+raw trial logs would otherwise look confusing, but not worth a
+safety-critical-loop code change this close to the deadline.
+
+### Open items
+- **Final report must include, as documented limitations/findings from
+  this trial run:** (1) the 12-vs-20+20 reduction and its reasoning,
+  (2) total-darkness false-WARNING (trial 12, unresolved), (3) camera
+  autofocus/exposure transients occasionally inflating p_fire enough to
+  clear the temporal vote (trials 4, 11 first attempts), (4) the D8
+  buzzer loose-connection incident as a hardware-reliability note, (5)
+  trial 8's borderline WATCH/SAFE non-repeatability.
+- Trial 12's total-darkness finding is not root-caused beyond a
+  hypothesis (likely absence of true near-black negatives in training
+  data) — flag as suspected-but-unconfirmed mechanism if reported.
+- No code, model, or threshold changes were made in response to any
+  finding in this trial run — this was evaluation only, consistent with
+  info.md 4.4's role (measure and log, not fix mid-evaluation).
+- Everything else carried forward unchanged from prior Phase 11 entries.
+
+### Next phase
+Evaluation trials for Phase 11 are complete. Remaining Phase 11 items:
+developer visual verification of the dashboard (still pending per
+earlier entries) and the standing SAFETY-CRITICAL FPS/buzzer
+re-verification note. Phase 12 (documentation) is next — the final
+report should incorporate this trial run's results table plus all five
+open items listed above as honest, disclosed findings.
+
+---
+
+## Demo-readiness check — agent auto-trigger wiring (2026-09-06)
+
+**Date:** 2026-09-06
+**Status:** COMPLETE — verified already wired, no code change needed
+**Distinct from Phase 11 trial work above** — this is a pre-demo wiring
+audit requested directly, not part of the 12-trial evaluation set.
+
+### What was checked
+Developer asked, ahead of a live demo, whether `edge/main.py` already
+auto-triggers `agent/graph.py`'s `run_incident()` on a real fusion
+WARNING/CRITICAL transition, or whether the two are still separate,
+manually-invoked pieces (`python edge/main.py` vs `python -m agent.graph
+warning/critical` run independently). Read `edge/main.py`,
+`agent/server.py`, and `agent/graph.py` in full to answer definitively
+rather than assume.
+
+### Finding: already wired, correctly, since Phase 8
+No code change was needed or made. Confirmed by reading the actual code:
+
+- `edge/main.py`'s hot loop (`main()`), on every frame where
+  `level >= Level.WARNING` and the 60s `notify_cooldown_seconds` has
+  elapsed, calls `notify_agent()` (`edge/main.py:194-200`), which POSTs
+  to `agent.incident_url` (`http://127.0.0.1:8000/incident`) carrying
+  the REAL fusion state — `level.name`, `reason`, the real `vision` dict
+  (`p_fire`, `votes`, `alarm`, `smoke`), the real `sensors` dict (`mq2`,
+  `mq135`, `gas_high`, `gated`), and a JPEG snapshot. This is not
+  synthetic data — the `"warning"`/`"critical"` string arguments only
+  exist in `agent/graph.py`'s `if __name__ == "__main__":` fire-drill
+  block (lines 305-321), a separate manual CLI entry point
+  (`python -m agent.graph warning/critical`) for testing the agent in
+  isolation, never the live path.
+- `agent/server.py`'s `POST /incident` handler decodes the snapshot and
+  runs `run_incident()` inside a FastAPI `BackgroundTasks` task
+  (`agent/server.py:79`) — the HTTP response returns immediately;
+  the 60s cancel window and the rest of the LangGraph state machine run
+  in the background on the agent server process, never on `main.py`.
+- Ordering matches info.md 2.2 exactly: `fuse()` computes the level,
+  THEN `set_alarm()` (buzzer) fires unconditionally at
+  `level >= Level.WARNING`, THEN (strictly after) the network step
+  attempts `notify_agent()` — already the documented order in
+  `main.py`'s own comments, unchanged.
+- Non-blocking confirmed: `notify_agent()`'s `requests.post(...,
+  timeout=2)` is wrapped in try/except with a hard 2s cap; the 60s
+  cancel-window wait lives entirely in the agent server's background
+  task, not in `main.py`'s loop, so `main.py` continues processing
+  frames at full FPS the instant the POST call returns (success or
+  timeout alike).
+
+**No fusion/alarm timing was touched. No files were edited.** The
+developer's premise (that `run_incident()` needed wiring with real
+state, or that it was still manual-only) predates this check or was
+based on a stale mental model — the wiring has existed since Phase 8
+and matches info.md 2.2/2.3 as originally designed.
+
+### Dashboard startup — confirmed genuinely separate processes
+Checked `dashboard/backend/main.py` and `dashboard/frontend/` — no
+Procfile, docker-compose, or bundling script exists. Three independent
+long-running processes plus the agent server, no unified launcher.
+
+### Full live-demo command list, in order
+1. `uvicorn agent.server:app --port 8000` (must be up first — main.py
+   POSTs to it)
+2. `uvicorn dashboard.backend.main:app --port 8001`
+3. `cd dashboard/frontend && npm run dev`
+4. `python edge/main.py` (start last — this is the process to
+   demo/disconnect network on)
+
+No fourth manual agent-invocation command is needed for the demo —
+step 4 auto-triggers the agent via step 1 on any real WARNING/CRITICAL
+transition. `python -m agent.graph warning/critical` remains available
+as a standalone drill/test command but is not part of the demo sequence.
+
+### Open items
+None created by this check. Standing SAFETY-CRITICAL FPS/buzzer
+re-verification and dashboard visual-verification open items (both
+carried from Phase 11) are unaffected and still pending.
+
+---
+
+## Phase 11 addendum — dashboard timestamp formatting + System Health offline state (2026-09-06)
+
+**Date:** 2026-09-06
+**Status:** COMPLETE — frontend-only, no backend/edge changes, developer visual verification pending (same standing item as the rest of Phase 11's dashboard work)
+
+### What was built
+
+**Fix 1 — human-readable timestamps everywhere.** New
+`dashboard/frontend/src/formatTimestamp.js` mirrors the convention
+`agent/compose.py`'s `natural_time_phrase()` already established weeks
+ago for Telegram/SMS alert text (concrete clock time + short date, e.g.
+"9:29 PM on Sep 3" there → "9:29 PM, Sep 3" here — same intent, adapted
+to a compact card/table format rather than a sentence). Accepts either
+an ISO 8601 string (incident timestamps) or unix seconds (live-sensor
+samples, `edge/livelog.py`'s `time.time()`), returns the input
+unchanged if unparseable rather than showing "Invalid Date". Applied
+everywhere a raw timestamp was previously rendered directly:
+- `Overview.jsx`: System Health hero's last-incident subtitle, the
+  "Most recent event" card's Time row, the fusion-timeline hover
+  tooltip's Timestamp row.
+- `LiveIncidents.jsx`: each incident card's header timestamp (the
+  expanded raw-JSON debug view intentionally left as-is — that's a
+  deliberate "view raw row" affordance, not a user-facing display).
+- `HistoricalArchive.jsx`: the S3 incident table's Timestamp column.
+- `EvaluationTrials.jsx`: the trials table's `timestamp` column
+  specifically (table is otherwise a schema-free passthrough of
+  `eval/results.csv`'s columns — only this one column is intercepted
+  and reformatted).
+- `LiveSensorChart.jsx`: the live sensor chart's hover-tooltip time
+  label (previously `toLocaleTimeString()`, time-only with no date —
+  now consistent with every other surface).
+
+**Fix 2 — System Health / device-offline state.** Root cause matched
+the developer's report exactly: `/api/live-sensors` returning
+`ok: true` only means `data/live_sensors.json` existed and parsed
+(`dashboard/backend/main.py`'s `live_sensors()`) — it says nothing
+about whether `edge/main.py` is still actually running. A killed
+process leaves its last-written file in place indefinitely, which the
+frontend was treating as a fully healthy live feed forever. Fix is
+frontend-only, in `Overview.jsx`: compare the freshest live sample's
+own `timestamp` field (unix seconds) against wall-clock `Date.now()`;
+if older than `LIVE_STALE_MS` (12,000ms) or no live sample exists at
+all, `isDeviceOffline` is true regardless of what `liveSensors.ok`
+says. **Threshold reasoning:** backend samples at 1 Hz
+(`config.yaml live_log.sample_interval_seconds: 1.0`) and the frontend
+polls the endpoint every 3s (existing poll cadence, unchanged) — a
+healthy feed's freshest sample is never more than ~3-4s old, so 12s
+gives a full missed poll cycle of slack before flagging offline,
+avoiding flicker on ordinary timing jitter while still catching a
+truly stopped `main.py` within one or two poll cycles.
+`SystemHealthHero` now renders a distinct offline state when
+`isOffline` is true — no percentage, no ring value, a plain "Offline"
+label plus a "DEVICE OFFLINE" pill (reusing the existing
+`status-pill--negative` class already used elsewhere for CANCELLED/
+TIMEOUT), and, if any live sample was ever seen, a
+"Last seen: `<formatted timestamp>` — last level: `<LEVEL>`" line
+rather than the card going blank or silently showing stale data as if
+current.
+
+### Key decisions
+- Staleness detection lives entirely in the frontend, not the backend —
+  `/api/live-sensors` itself is unchanged (still just reads and returns
+  the file verbatim per its existing "deliberately thin" design). The
+  freshest sample already carries its own timestamp, so no new backend
+  field or endpoint was needed.
+- `isDeviceOffline` takes priority over `mostRecent`/last-incident
+  fallback logic entirely — an offline device must never show ANY
+  numeric health percentage, even the old "last incident" fallback
+  percentage, since that could still misread as a live number.
+
+### Measured / verified
+- `npm run build` clean (`dist/` deleted after, per this project's
+  established pattern of not committing build output for a visual-only
+  check).
+- `oxlint src` clean of new findings introduced by this change — two
+  pre-existing warnings unrelated to this work (`usePolling.js` ref
+  access, `HistoricalArchive.jsx` exhaustive-deps) untouched; two
+  `Date.now()`-during-render warnings in `Overview.jsx` are the same
+  already-accepted pattern this file's pre-existing `recentCritical`
+  check already used (component re-renders every poll tick, so a stale
+  read self-corrects next tick — not a new risk category).
+- Python side unaffected — `dashboard/backend/main.py` untouched,
+  confirmed via `ast.parse`.
+- **Visual result unseen — developer must view in a browser**, same
+  standing item as the rest of Phase 11's dashboard work. See "How to
+  verify" below.
+
+### How to verify
+Restart both dashboard services (frontend picks up the new file
+automatically under Vite's dev server; no backend restart is strictly
+required since `dashboard/backend/main.py` was not touched, but
+restarting both together is the clean baseline):
+```
+uvicorn dashboard.backend.main:app --port 8001
+cd dashboard/frontend && npm run dev
+```
+Then, in the browser:
+1. **Timestamps** — every timestamp on Overview (hero subtitle, Most
+   Recent Event card, fusion-chart hover tooltip), Live Incidents cards,
+   Historical Archive table, Evaluation Trials table, and the live
+   sensor chart's hover tooltip should read like "9:41 PM, Sep 6" —
+   never a raw `2026-09-06T21:41:00`-style string.
+2. **Device offline state** — with `edge/main.py` NOT running (or after
+   stopping it), the System Health card should show "Offline" / a
+   "DEVICE OFFLINE" pill instead of any percentage, plus (if `main.py`
+   had been run at least once before) a "Last seen: ... — last level:
+   ..." line. Start `edge/main.py` and confirm the card recovers to a
+   normal live percentage within a few seconds (one or two 3s poll
+   cycles) once fresh samples resume.
+
+### Confirmation — trial data and S3 (question, not a change request)
+Read `eval/run_trial.py` in full: it launches `edge/main.py` as a
+subprocess and its only data-writing function is `log_result()`, which
+appends exclusively to `eval/results.csv` via `csv.DictWriter`. **No
+`boto3`, `S3`, or `cloud.uploader` import or reference exists anywhere
+in this file** — confirmed by direct grep in addition to the read.
+**Trial data logged by `eval/run_trial.py` is purely local; it is never
+directly uploaded to S3.**
+
+**When trial data DOES end up in S3, and why:** `run_trial.py` launches
+the real, unmodified `edge/main.py` as its subprocess — so if a trial's
+conditions genuinely drive the fusion level to CRITICAL, the ordinary
+production path fires exactly as it would in any non-trial run:
+`edge/main.py` → POST to `agent/server.py` → `agent/graph.py`'s
+`_upload_critical()` (CRITICAL-only gate, Phase 10). That upload is
+triggered by the fusion level reached during the trial, not by
+`run_trial.py` itself — `run_trial.py` has no awareness of or hook into
+that path at all. In practice, per the Phase 11 12-trial closing entry,
+trials 2 and 5 reached genuine CRITICAL and so would have gone through
+this same path incidentally; `eval/results.csv` and any S3 objects from
+those trials are two independent, unlinked records of the same
+underlying events — `run_trial.py` does not write the `event_id` that
+would join them.
+
+### Open items
+None created by this addendum. Standing SAFETY-CRITICAL FPS/buzzer
+re-verification and dashboard visual-verification open items (both
+carried from Phase 11 and reconfirmed above under "How to verify") are
+unaffected and still pending.
+
+---
+
+## Phase 11 addendum — live sensor chart x-axis: repeated truncated date fixed (2026-09-06)
+
+**Date:** 2026-09-06
+**Status:** COMPLETE — frontend-only, no backend/edge changes, developer visual verification pending (same standing item as the rest of Phase 11's dashboard work)
+
+### The bug
+Developer screenshot showed the live gas sensor chart's x-axis printing
+a repeated, truncated "Sun Se…" (from a full weekday+month string, e.g.
+"Sunday, September…") on every single tick. Root cause: `LiveSensorChart.jsx`
+passes raw `Date` objects directly as Plotly's `x` values
+(`x = readings.map((r) => new Date(r.timestamp * 1000))`) with no
+`xaxis.tickformat` set anywhere in `plotlyTheme.js`'s shared `darkLayout`
+or the chart's own layout override — so Plotly's built-in date-tick
+auto-formatter chose its own format. Because this chart's window is
+short (the rolling live-readings buffer is at most 600 samples at 1 Hz =
+10 minutes, `config.yaml live_log.buffer_size`), every tick sits within
+the same narrow span and the auto-formatter's chosen format repeats
+near-identically (and, per the report, gets clipped) on every tick —
+meaningless repetition, not a real per-tick date change. The
+`timeLabels` array built via `formatTimestamp()` for the hover tooltip
+was NOT the source of the axis bug — that array only ever fed the hover
+tooltip's `customdata`, never the axis itself.
+
+### The fix
+`dashboard/frontend/src/components/LiveSensorChart.jsx`:
+- Added `xaxis.tickformat: "%H:%M:%S"` (Plotly/d3-time-format spec) —
+  forces every tick to render time-only, e.g. "14:32:05", never a date
+  component.
+- Added a `latestDateLabel` (derived from the freshest sample's own
+  `Date`, formatted "Sep 6, 2026") shown once, in the chart header, as
+  "Live gas sensor readings — Sep 6, 2026" — new `.panel-title-subtitle`
+  CSS class (`index.css`, dimmed `--text-dim` weight-400 span) added for
+  this and reused below.
+
+**Fusion level timeline checked too, per the request — same code
+pattern found, different fix needed.** `Overview.jsx`'s fusion chart
+also passes raw ISO-string timestamps straight into Plotly's `x`
+without any `tickformat`, but this chart's span is NOT a fixed short
+window — it's every logged incident, which can legitimately cross
+multiple days depending on how many incidents exist. A blanket
+"date-once + time-only ticks" fix would misrepresent the data if
+incidents actually span several days (the label would silently drop
+which day each point happened on). Existing behavior for that
+multi-day case was already correct — a pre-existing code comment
+already documents observing clean `"22:45 / Sep 2, 2026"`-style ticks
+from Plotly's own auto-formatter, unlike the sensor chart's broken
+repeated-truncation. Fix applied conditionally: a new `allSameDay`
+check (`incidents.map(i => new Date(i.timestamp))`, compared via
+`toDateString()`) only activates the same time-only-ticks +
+once-in-header-date treatment when every currently-visible incident
+genuinely falls on one calendar day; when incidents span multiple days,
+`xaxis.tickformat` is left unset and Plotly's existing (already-correct)
+date+time auto-format stands unchanged.
+
+### Key decisions
+- Time-only tick format matches the convention from the recent
+  timestamp-readability fix (`formatTimestamp.js`) in spirit — 24-hour
+  `%H:%M:%S` was chosen over a 12-hour AM/PM format for the axis
+  specifically because Plotly's `tickformat` is a d3-time-format string,
+  not a `toLocaleTimeString` call, and `%H:%M:%S` reads unambiguously at
+  a glance on a dense, fast-moving live chart without needing to parse
+  "AM"/"PM" — `formatTimestamp()` (used everywhere else: cards, tables,
+  tooltips) is unchanged and still 12-hour, since those are read
+  as full sentences/labels, not axis ticks.
+- The fusion chart's conditional fix (only same-day collapses to
+  time-only) was a deliberate correctness call, not scope creep: an
+  unconditional fix would have been simpler code but wrong on a
+  multi-day incident log.
+
+### Measured / verified
+- `npm run build` clean (`dist/` deleted after).
+- `oxlint src` clean of new findings — the four warnings present are
+  the same pre-existing ones from the prior addendum
+  (`usePolling.js` ref access, `HistoricalArchive.jsx` exhaustive-deps,
+  two `Overview.jsx` `Date.now()`-during-render warnings, one of which
+  is this fix's own `allSameDay` computation using the same
+  already-accepted pattern as the existing `recentCritical`/staleness
+  checks in that file).
+- `dashboard/backend/main.py` untouched, confirmed via `ast.parse`.
+- **Visual result unseen — developer must view in a browser**, same
+  standing item as the rest of Phase 11's dashboard work.
+
+### How to verify
+```
+uvicorn dashboard.backend.main:app --port 8001
+cd dashboard/frontend && npm run dev
+```
+Then, in the browser, on the Overview tab:
+1. **Live gas sensor readings chart** — x-axis ticks should now read
+   as bare times only (e.g. "14:32:05"), never a repeated/truncated
+   date string. The chart header should show the current date once,
+   e.g. "Live gas sensor readings — Sep 6, 2026".
+2. **Fusion level timeline chart** — if all logged incidents happen to
+   be from today only, its header should likewise show "Fusion level
+   timeline — Sep 6, 2026" and its ticks should be time-only. If
+   incidents span multiple days, the header shows no date subtitle and
+   ticks should still read as clean "time / Mon D, YYYY"-style Plotly
+   defaults (the pre-existing, already-correct behavior) — confirm this
+   case isn't accidentally now missing its date if you have multi-day
+   incident data.
+
+### Open items
+None created by this addendum. Standing SAFETY-CRITICAL FPS/buzzer
+re-verification and dashboard visual-verification open items (both
+carried from Phase 11) are unaffected and still pending.
+
+---
+
+## Phase 13 — ESP32-CAM hardware wiring, first pass (UNVERIFIED)
+
+**Date:** 2026-09-08
+**Status:** PARTIAL — physical wiring only, no upload attempted, nothing confirmed working yet
+
+### What was built
+Physical hardware assembly toward the ESP32-CAM migration finalized in
+`plan.md` §10. No firmware, no code, no test run yet.
+
+- OV2640 camera module physically attached to the ESP32-CAM's ribbon
+  connector, latch closed, confirmed seated. Mechanical only — no GPIO
+  involved.
+- FTDI programmer (HW-417C) wired to the ESP32-CAM for flashing:
+  - GND -> GND
+  - FTDI's dedicated 5V hole pin -> 5V (deliberately not the 6-pin
+    header's VCC pin, whose voltage was ambiguous/unverified)
+  - FTDI TX -> ESP32 U0R
+  - FTDI RX -> ESP32 U0T
+- Flash-mode wire placed: ESP32-CAM IO0 -> GND. This is temporary —
+  added before an upload and removed after, not a permanent connection.
+
+### Key decisions
+- Used the FTDI board's dedicated 5V hole pin instead of the 6-pin
+  header's VCC pin specifically because the header VCC's actual output
+  voltage was not verified — avoids risking the ESP32-CAM on an
+  unconfirmed voltage source.
+
+### Measured results
+NOT YET MEASURED. No upload attempted, no board detection confirmed.
+
+### How to verify
+Not yet applicable — see Next phase below.
+
+### Open items
+- **STATUS: wiring complete but UNVERIFIED.** Do not describe this as
+  a working connection until an actual test upload succeeds.
+- First test upload (e.g. a blink sketch) needed to confirm the full
+  toolchain end-to-end: FTDI driver recognized, board detected on the
+  correct serial port, IO0/GND flash-mode entry actually works, upload
+  completes, sketch runs post-reset.
+
+### Next phase
+First test upload (blink sketch) to confirm the wiring and toolchain
+end-to-end before any camera- or sensor-related firmware is attempted.
+
+---
+
+## Phase 13 — ESP32-CAM first flash attempt, BLOCKED (hardware)
+
+**Date:** 2026-09-08
+**Status:** BLOCKED — hardware, no code ever uploaded
+
+### What was built / attempted
+No firmware or code changes. A full flashing session on the bare FTDI
+wiring from the prior entry, plus diagnostic isolation work.
+
+- Full FTDI-to-ESP32-CAM wiring completed and re-verified multiple
+  times across the session: GND, 5V, TX/RX crossed to U0R/U0T (tried
+  both the FTDI's 6-pin header pins and its hole-row RXD/TXD), IO0-GND
+  flash-mode jumper, and a VCC-to-3.3V bridge wire (added to give the
+  FTDI's own serial drivers a logic-level reference).
+- Compile toolchain fully verified working every attempt: clean
+  compiles, 270456 bytes (8%), correct board profile (AI Thinker
+  ESP32-CAM), correct chip confirmed as genuine ESP32-S via module
+  silkscreen.
+- Upload handshake failed consistently every attempt with "Failed to
+  connect to ESP32: No serial data received," across all variations
+  tried: manual reset-button timing, power-cycle timing, both TX/RX
+  pin locations, 9600 vs 115200 baud, VCC-3.3V bridge present/absent.
+
+### Diagnostic isolation performed
+- FTDI board independently verified fully functional via a TXD-RXD
+  loopback test (typed text echoed correctly in Serial Monitor) —
+  rules out the FTDI chip, CH340 driver, USB cable, and Arduino
+  IDE/port config as the fault.
+- ESP32-CAM independently verified powered and alive via a direct
+  IO4-to-3V3 wire test that lit the onboard flash LED — rules out a
+  fully dead/unpowered board.
+- Attempted powering the ESP32-CAM from a separate Arduino Uno
+  (sharing a common ground with the FTDI) as an alternate 5V source.
+  This caused the FTDI to drop off USB enumeration entirely whenever
+  both boards were connected to the Mac simultaneously — most likely a
+  ground-loop/two-independent-power-source conflict between separate
+  USB ports, not a wiring mistake. Reverted this experiment. No damage
+  observed on either board (checked for heat/smell both before and
+  after).
+
+### Key decisions
+- **ROOT CAUSE (suspected, not confirmed — no multimeter available
+  this session):** the generic FTDI/HW-417C adapter's onboard power
+  regulator most likely cannot deliver sufficient stable current for
+  the ESP32 bootloader stage specifically. This matches Espressif's
+  own esptool troubleshooting docs, which explicitly warn that FTDI
+  adapter 3.3V/5V outputs are often insufficient for ESP-series boot,
+  and matches community reports of the same symptom traced to measured
+  low voltage (as low as 1.2V) on similar FTDI boards.
+- Also noted: the FTDI board's VCC pin (6-pin header) may be
+  internally trace-connected to its separately-labeled 3.3V/5V points
+  in a way that was never fully resolved this session — flagged as
+  unresolved, not load-bearing on the final decision.
+- **DECISION: acquire an ESP32-CAM-MB USB programmer shield** (~Rs
+  99-229, CH340G-based, several in-stock options confirmed) rather
+  than continue debugging the bare FTDI setup. The shield has its own
+  dedicated regulator, a built-in BOOT/IO0 button, and a built-in
+  RESET button, directly eliminating every suspected failure point
+  from this session (weak power, jumper-wire flash-mode reliability,
+  manual reset timing). Confirmed this is a "programmer only" listing,
+  not bundled with a duplicate ESP32-CAM module. Purchase in progress
+  as of this log entry.
+
+### Measured results
+NOT YET MEASURED / NOT APPLICABLE. No successful upload this session
+or ever. No multimeter available to confirm the suspected regulator
+root cause.
+
+### How to verify
+Not yet applicable — blocked on hardware arrival.
+
+### Open items
+- **STATUS: still NOT FLASHED.** No code has ever been successfully
+  uploaded to the ESP32-CAM. All wiring, camera attachment, and
+  toolchain setup otherwise complete and verified.
+- Root cause (FTDI regulator insufficient current) remains suspected,
+  not confirmed — no multimeter used this session.
+- FTDI 6-pin header VCC's relationship to its labeled 3.3V/5V points
+  never fully resolved — flagged, not currently load-bearing.
+
+### Next phase
+Repeat the upload attempt using the ESP32-CAM-MB shield once it
+arrives — should require the ESP32-CAM seated directly into the
+shield, USB plugged in, BOOT+RESET button sequence, no jumper wires
+for power/data at all.
+
+## Phase 13 — ESP32-CAM first successful flash, MB shield (2026-09-09)
+
+### What happened
+- Acquired an ESP32-CAM-MB programmer shield (HW-381, V0.0.2,
+  CH340-based) to replace the bare FTDI-to-ESP32-CAM wiring approach
+  documented as blocked in the prior session's log entry.
+- ESP32-CAM seated directly into the shield's socket (pins-down,
+  camera-up orientation confirmed correct on first attempt, snug fit,
+  no forcing needed).
+- Root cause of the prior FTDI blockage remains unconfirmed (no
+  multimeter used) but is no longer relevant — the shield sidesteps it
+  entirely via its own onboard regulator and auto-reset circuit.
+- Shield connected via Micro-USB. First cable tried was almost
+  certainly charge-only (device powered, LED lit, but produced no
+  serial port in `ls /dev/cu.*`) - swapped to a confirmed data-rated
+  cable (Portronics Konnect B, "Fast Charging & Data Sync"), which
+  immediately enumerated as /dev/cu.usbserial-10, no new driver
+  install needed (existing CH340 driver from the FTDI troubleshooting
+  session already covered it).
+- UPLOAD SUCCEEDED on the first attempt, no manual button press
+  required — the shield's auto-reset circuitry (DTR/RTS-driven, "Hard
+  resetting via RTS pin" confirmed in esptool output) handled IO0/EN
+  timing automatically. Manual IO0+RST button sequence available as a
+  documented fallback if auto-reset ever fails on a future upload, but
+  was not needed this session.
+- VERIFIED WORKING END-TO-END: a minimal test sketch (pinMode(4,
+  OUTPUT) + digitalWrite HIGH/LOW blink loop on GPIO4, the onboard
+  flash LED) was written, uploaded, and confirmed visually blinking
+  correctly on normal (non-inverted) logic. This is the project's
+  first-ever confirmed running code on the ESP32-CAM.
+
+### Measured results
+Upload via esptool succeeded first attempt, "Hard resetting via RTS
+pin" in output. Test sketch confirmed visually: onboard flash LED
+(GPIO4) blinks on/off as coded, normal (non-inverted) logic.
+
+### How to verify
+Not re-run this session — see "What happened" for the confirmed
+result (visual blink observed directly).
+
+### Open items
+- **STATUS: ESP32-CAM flashing pipeline now fully working and
+  repeatable via the MB shield.** FTDI-direct wiring approach fully
+  retired for this project - the shield is now the sole programming
+  path going forward.
+- ADC1-vs-ADC2 WiFi-conflict check still pending before finalizing
+  which specific pins the two MQ sensors' analog outputs use.
+
+### Next phase
+Wire MQ-2, MQ-135, and the buzzer to the ESP32-CAM's GPIO pins
+(IO12/IO13/IO14/IO15/IO2 confirmed safe, ADC pin choice pending the
+WiFi-conflict check above).
+
+---
+
+## Phase 13 — ADC pin decision corrected: GPIO34/35 don't exist on this header (2026-09-09)
+
+### What happened
+- The prior session's Step 1 pin table (see the "ESP32-CAM first
+  successful flash" entry above) recommended GPIO34/35 as clean ADC1
+  pins for MQ-2/MQ-135. **This was WRONG for the physical board in
+  hand** — the developer supplied the official AI-Thinker ESP32-CAM
+  pinout diagram (RandomNerdTutorials source) cross-checked against
+  the physical board's silkscreen labels, confirming GPIO34/35/36/39
+  are genuinely absent from this board's header, not merely
+  undocumented. The camera-side header exposes only: 5V, GND, IO12,
+  IO13, IO15, IO14, IO2, IO4. The other side: 3V3, IO16, IO0, GND,
+  VCC, IO3(U0RXD), IO1(U0TXD), GND.
+- Re-analyzed the actually-available pins against this corrected
+  header:
+  - **IO16** — ruled out. Doubles as PSRAM chip-select on this board;
+    PSRAM is required for the camera's JPEG framebuffer at VGA. Not a
+    candidate.
+  - **IO0** — already excluded (camera XCLK + boot-mode strap).
+  - **IO4** — already committed (flash LED, confirmed live).
+  - **IO2** — already committed (buzzer, decided prior session).
+  - **IO12/13/14/15** — all HS2_* (SD-bus) pins. Confirmed via repo
+    grep that this project never calls SD.h/SD_MMC.begin() anywhere
+    (no microSD use per plan.md/info.md, unchanged), so the SD
+    peripheral itself is never initialized and does not claim these
+    pins at the driver level — that part is genuinely safe.
+  - However, **IO12 and IO15 are also ESP32 boot-mode strapping
+    pins** (IO12/MTDI selects flash voltage at boot; IO15/MTDO
+    affects boot log verbosity) — an external sensor's idle voltage
+    on these pins at power-on risks corrupting boot-mode selection,
+    independent of any SD_MMC concern. Excluded IO12/IO15 on this
+    basis, same class of caution that already ruled out IO0.
+  - **IO13 and IO14 are data/clock lines only, not boot straps** — safe
+    from the boot-strap failure mode. But like all of IO12-15, they
+    are **ADC2-mapped**, meaning `analogRead()` on them is unreliable
+    while WiFi is actively transmitting (the WiFi driver takes
+    exclusive use of the ADC2 hardware block) — the same ADC2/WiFi
+    conflict the original Step 1 pin search was trying to avoid by
+    reaching for ADC1 pins in the first place.
+- Confirmed via plan.md §10.3/§10.6 that this project's normal
+  operating mode is **continuous** camera streaming over WiFi (not
+  duty-cycled), and confirmed via info.md §2.2 that the gas-only local
+  fallback must remain reliable at all times, independent of and
+  simultaneous with WiFi/camera activity — not just during WiFi-off
+  windows. This makes the ADC2/WiFi conflict a genuine, non-cosmetic
+  risk for IO13/IO14, not a theoretical one.
+
+### Key decisions
+- **Developer decision (2026-09-09): use IO13 and IO14 for the two MQ
+  sensors anyway, risk explicitly accepted and documented rather than
+  hidden.** An external I2C ADC (ADS1115) was offered as the option
+  that would fully avoid the ADC2/WiFi conflict, and rejected in favor
+  of proceeding directly on the ESP32's own ADC2 pins.
+- **MQ-2 → GPIO14, MQ-135 → GPIO13** (clock vs. data line — either
+  order is electrically equivalent for a single analogRead(); GPIO14
+  assigned to MQ-2 arbitrarily, no technical reason to prefer one over
+  the other between these two).
+- **Buzzer stays on GPIO2**, unchanged from the prior session's
+  decision (camera-bus-tied on paper, not actively driven by the
+  camera driver post-init, accepted as the least-bad digital-out
+  option after ruling out GPIO16/PSRAM as worse).
+- **Known, accepted limitation going forward:** MQ-2/MQ-135
+  `analogRead()` values on GPIO13/14 may read stale, zero, or glitched
+  during bursts of active WiFi transmission (e.g. while a camera frame
+  is being sent to Lambda). This directly affects the reliability of
+  the gas-only local fallback described in plan.md §10.5 at exactly
+  the moments it matters most (live streaming sessions). This is a
+  disclosed, developer-accepted trade-off, not a silently ignored bug
+  — it must be carried into the final report's limitations section
+  for Phase 13, and should be empirically characterized once firmware
+  is running (Step 2) rather than assumed benign.
+
+### Measured results
+None yet — analysis and decision only, no firmware written this
+session.
+
+### How to verify
+Not applicable yet. Once Step 2 firmware is written and flashed, watch
+for MQ-2/MQ-135 CSV values freezing, dropping to 0, or spiking to 4095
+specifically during active camera-streaming bursts — that is the
+predicted signature of the accepted ADC2/WiFi conflict, and should be
+recorded (frequency, duration, whether it recovers) as real evidence
+for the report rather than assumed away.
+
+### Open items
+- MQ-2/MQ-135 ADC2-vs-WiFi glitch behavior is predicted but not yet
+  empirically measured — must be characterized once Step 2 firmware is
+  running.
+- If the glitch proves severe enough to compromise the local fallback
+  in practice, an external I2C ADC (ADS1115) remains the documented
+  fallback fix, not yet pursued.
+
+### Next phase
+Step 2 (per this session's prompt): write new ESP32 firmware (separate
+file, camera/flash sketch untouched) that reads GPIO14 (MQ-2) and
+GPIO13 (MQ-135) via analogRead() and prints raw 12-bit "mq2,mq135" CSV
+once per second at 9600 baud, matching edge/sensors.py's parsing
+exactly. Buzzer logic (Step 3) still not started.
+
+**SUPERSEDED 2026-09-16 — see "Phase 13 — architecture change: two-board
+split, MB-shield sensor wiring abandoned" below.** The IO12/13/14/15
+MB-shield-based sensor plan across this entry and the three Phase 13
+entries above it (hardware wiring first pass, first flash attempt,
+first successful flash) is DONE — the developer has moved sensor
+wiring entirely off the ESP32-CAM/MB-shield onto a second, separate
+ESP32 board. The ESP32-CAM's flash-LED (IO4) and camera pin
+assignments are unaffected and remain current; do not carry the
+IO12-15 MQ-2/MQ-135/buzzer pin assignments forward into any future
+work.
+
+---
+
+## Phase 13 — architecture change: two-board split, MB-shield sensor wiring abandoned (2026-09-16)
+
+### What happened
+- **Developer decision this session: FireWatch now uses TWO separate
+  ESP32 boards, not one.** This replaces every prior Phase 13 sensor-
+  wiring entry above (hardware wiring first pass, first flash attempt
+  BLOCKED, first successful flash, and the IO12-15 ADC pin correction)
+  — those entries are DONE, not silently dropped, but their pin
+  assignments no longer apply to anything going forward.
+- **Board 1 — ESP32-CAM (existing, on its MB shield):** camera/vision
+  ONLY from this point forward. No sensor wiring on this board. Fully
+  untouched by this session — its IO4 flash-LED pin and camera init
+  remain exactly as flashed in the "first successful flash" entry.
+- **Board 2 — plain ESP32 DevKit V1 (30-pin, new hardware this
+  session):** MQ-2, MQ-135, buzzer. Chosen specifically because this
+  board exposes genuine ADC1 pins, unlike the ESP32-CAM's MB shield —
+  whose only free candidate pins (IO12-15) turned out to be ADC2,
+  tied to the SD/flash bus, and subject to the WiFi-conflict risk
+  documented and developer-accepted in the entry immediately above
+  this one. Moving sensors to a second board with real ADC1 access
+  **eliminates that entire class of problem** rather than continuing
+  to manage it as an accepted risk.
+- Confirmed final pin assignment on the plain ESP32 DevKit:
+  - **MQ-2 signal → GPIO34** (ADC1, input-only)
+  - **MQ-135 signal → GPIO35** (ADC1, input-only)
+  - **Buzzer control → GPIO33**
+  - Both MQ-2 and MQ-135 use a **270Ω/270Ω (1:1) voltage divider** on
+    their A0 line before reaching the GPIO — A0 can swing toward 5V
+    and these GPIOs are 3.3V-max. This supersedes an earlier 10k/20k
+    divider concept that was never built; 1:1 is the confirmed final
+    ratio, current draw ~9.3mA per divider, confirmed safe.
+  - Both sensors' divider ground legs return to a shared GND rail with
+    the ESP32's own GND.
+  - Both sensors' D0 pins are intentionally left unwired — analog-only
+    design, consistent with the original Arduino Uno-era convention
+    (plan.md Appendix A.2: always A0/analog, never D0/digital).
+
+### Key decisions
+- Two-board split over continuing to fight the ADC2/WiFi conflict on
+  the MB shield, reasoning above.
+- 1:1 (270Ω/270Ω) voltage divider on both sensors' analog lines, not
+  the earlier unbuilt 10k/20k concept.
+- GPIO34/35 for MQ-2/MQ-135 (genuine ADC1, input-only pins on the
+  plain DevKit — no boot-strap or SD-bus conflicts of any kind, unlike
+  the abandoned IO12-15 candidates).
+- GPIO33 for the buzzer on the new board — separate GPIO namespace
+  from the ESP32-CAM, so no relation to the old GPIO2 buzzer decision
+  on that board (which is now moot, since the buzzer moved boards).
+
+### Measured results
+**Working hardware state, confirmed this session via Serial Monitor:**
+after mounting both boards to a rigid base with strain-relieved wiring
+(taped connections, no floating F-M wires under tension), MQ-2 and
+MQ-135 produced stable, correlated readings in the ~100-190 range
+(12-bit ADC, 0-4095 scale) during warm-up.
+
+**NEW FINDING, not previously documented — airflow/disturbance
+sensitivity:** both sensors show a real, repeatable reading increase
+(from ~105 baseline up to ~170-185) when the physical board/sensors
+are moved or disturbed by airflow (e.g. picking up the breadboard, a
+hand ~10cm away) — **not necessarily indicating gas presence.** Both
+sensors move together, ruling out a wiring fault; this is airflow/
+disturbance sensitivity inherent to the MQ sensor family (SnO2 bead
+sensors are known to respond to airflow across the heated element, not
+only to target-gas concentration). This is a genuine false-positive
+risk for the existing threshold-based alert logic
+(plan.md §5.5 / info.md-referenced baseline + 0.30/0.60 formula) if
+the deployed location has ambient air movement (fans, doors, foot
+traffic, handling).
+
+Burn-in is in progress as of this session (board on a wall-charger
+power source, away from the developer's laptop, to get an undisturbed
+baseline). Numbers had not yet been confirmed fully stable/settled
+when this session ended — **do not treat the ~100-190 range above as
+final baseline/peak values.** Per info.md §8, MQ readings before 24h
+burn-in are not valid calibration data.
+
+### How to verify
+Not applicable yet for calibration — burn-in must complete first (see
+Open items). Serial Monitor on the plain ESP32 DevKit at 9600 baud
+already shows live mq2/mq135 values moving together during a
+disturbance test, confirming the wiring and both ADC1 channels work.
+
+### Open items — flagged for the next session, not decided here
+- **12-bit vs. 10-bit ADC mismatch with plan.md's existing calibration
+  formula (§5.5).** That formula (`mq2_warn = baseline + 0.30 ×
+  (peak − baseline)`, etc.) was written against the Arduino Uno's
+  10-bit ADC (0-1023). The plain ESP32's ADC is 12-bit (0-4095). The
+  formula's *shape* is scale-invariant (it's a proportion of the
+  peak-baseline swing, not an absolute magnitude), but appendix A.2's
+  narrative text and any hardcoded absolute reference numbers
+  elsewhere in plan.md/config.yaml assume the old 10-bit range.
+  **Needs a developer decision, not made here:** either (a) confirm
+  the existing baseline+0.30/0.60 formula applies unchanged to raw
+  12-bit values (recompute baseline/peak fresh on the new hardware,
+  same formula, new numbers), or (b) rescale/re-derive something
+  else specific to 12-bit. No firmware or config.yaml threshold values
+  were touched this session pending this decision.
+- **Airflow false-positive risk needs a fusion-logic decision before
+  implementing anything — not implemented this session.** The
+  repeatable ~105→~170-185 airflow-triggered reading increase
+  documented above looks, to a threshold check alone, identical to a
+  real low-level gas event. Two candidate mitigations were identified
+  but neither was chosen or built: (a) a sustained-duration check
+  before alerting (require an elevated reading to persist N seconds
+  before counting as `gas_high`, not trigger on a single sample — the
+  same N-of-M temporal-voting principle already used for vision in
+  `edge/vision.py`'s TemporalVoter), or (b) widening the baseline
+  margin so ordinary airflow disturbance falls under the `warn`
+  threshold. **This should be decided with visibility into the actual
+  `edge/` and `edge/fusion.py` code before implementing** — next
+  session should read those files first, not guess at a fix blind.
+- Burn-in not yet confirmed complete/stable — no final baseline, peak,
+  or `mq2_warn`/`mq2_danger`/`mq135_warn`/`mq135_danger` values exist
+  yet. Do not calibrate against the numbers in this entry.
+- The plain ESP32 DevKit's firmware itself (reading GPIO34/35, driving
+  GPIO33, CSV output format, WiFi/networking role if any relative to
+  the ESP32-CAM) is not described in this entry — this session was
+  hardware wiring + architecture decision + burn-in observation only,
+  per explicit developer instruction not to touch firmware/calibration
+  this session.
+
+### Next phase
+Finish burn-in on the plain ESP32 DevKit (24-48h per info.md §8),
+confirm stable baseline, then decide the 12-bit calibration question
+and the airflow-mitigation approach above (both explicitly deferred,
+not decided) before running any real calibration or fusion-threshold
+work. `edge/`, `agent/`, `dashboard/`, and `fusion.py` were not touched
+this session and should be read fresh next session before making the
+airflow-mitigation decision.
+
+---
+
+## Phase 13a — ESP32-CAM camera hardware smoke test: PASS (2026-09-16)
+
+### What happened
+- ESP32-CAM (on the MB shield, HW-381) connected via USB direct to the
+  laptop. Used the Arduino IDE's built-in `CameraWebServer` example
+  sketch verbatim — not a project-specific sketch. This test was a
+  hardware smoke test only; Phase 13a's actual deliverable (a proper
+  FireWatch capture sketch) is still pending.
+- **Issue 1, found and fixed:** `board_config.h` had
+  `CAMERA_MODEL_ESP_EYE` active instead of `CAMERA_MODEL_AI_THINKER` —
+  the wrong board define, not a hardware fault. This produced "Camera
+  probe failed with error 0x106 (ESP_ERR_NOT_SUPPORTED)" because the
+  SCCB/pin map didn't match this board. Fixed by commenting out
+  ESP_EYE and uncommenting AI_THINKER.
+- **Issue 2, found and worked around:** after the pin-map fix, camera
+  probe succeeded but init then failed with "JPEG format is not
+  supported on this sensor" — same 0x106 error code, different
+  underlying cause. Worked around by switching the example sketch's
+  `config.pixel_format` from `PIXFORMAT_JPEG` to `PIXFORMAT_RGB565`.
+  This is a documented behavior for this sensor/driver combination,
+  confirmed via web research during the session — not confirmed via
+  sketch-writing or a vendor datasheet as to which exact sensor
+  variant is on this specific module.
+
+### Measured results
+Camera streamed live over WiFi (HOME network) using the
+CameraWebServer example at RGB565. Image quality, color, and
+orientation all confirmed correct on manual visual check.
+
+### How to verify
+Not re-run this session — result confirmed live during the session
+(WiFi stream viewed directly, visual check of quality/color/
+orientation).
+
+### Open items
+- **OPEN DECISION, flagged for Claude Code, not resolved this
+  session:** the only working config found is RGB565, not JPEG.
+  Downstream needs — MJPEG streaming for Phase 13c, `edge/vision.py`
+  frame ingestion, and the eventual Lambda inference path — may assume
+  JPEG. Two undecided paths:
+  (a) build the real capture/streaming pipeline on RGB565 as-is and
+      convert format later if needed, or
+  (b) investigate the root cause of the JPEG rejection on this
+      specific sensor and attempt to get native JPEG output working,
+      since it's smaller/faster over WiFi and matches the existing
+      streaming/Lambda design assumptions in plan.md §10.3/10.6.
+  No firmware decision has been made — intentionally left open for the
+  next actual sketch-writing task, not silently resolved as (a).
+- Phase 13a's real deliverable (a proper FireWatch-specific capture
+  sketch, as opposed to the stock Arduino IDE example used for this
+  smoke test) is still pending and depends on the open decision above.
+
+### Next phase
+Write the project-specific ESP32-CAM capture sketch for Phase 13a,
+after the JPEG-vs-RGB565 decision above is made — not before.
+
+---
+
+## Phase 13a addendum — JPEG rejection root-caused: GC2145 sensor, not OV2640 (2026-09-16)
+
+### What happened
+Diagnosed the JPEG-vs-RGB565 open decision above by adding a one-time
+diagnostic read of `s->id.PID`/`MIDL`/`MIDH` via `esp_camera_sensor_get()`
+under the working RGB565 config, per Claude Code's request. Result:
+
+```
+PSRAM found: 1
+Camera PID: 0x2145, MIDL: 0x00, MIDH: 0x00
+```
+
+**Root cause confirmed by reading the installed `esp32-camera` driver
+source** (`sensor.h`, Arduino-ESP32 core 3.3.11,
+`espressif__esp32-camera/driver/include/sensor.h` line 26):
+`0x2145` is `GC2145_PID` exactly — a **GalaxyCore GC2145** sensor, NOT
+an OV2640. This module is one of the known cheap/aftermarket
+"AI-Thinker-compatible" ESP32-CAM boards that actually ships a GC2145
+clone sold as OV2640-equivalent — pin/software-compatible enough for
+RGB/YUV streaming, but a genuinely different sensor family with no
+on-chip JPEG hardware encoder.
+
+The driver's `sensor_t` struct carries an explicit per-sensor
+`const bool support_jpeg` capability flag (`sensor.h` line 131) — the
+"JPEG format is not supported on this sensor" message is the driver
+correctly reporting this sensor's real capability, not a probe/config
+bug. `MIDL`/`MIDH` both reading `0x00` is consistent with unbranded/
+clone silicon not populating the manufacturer-ID registers genuine
+OmniVision parts normally set.
+
+**Ruled out:** the PSRAM/`fb_location`/`jpeg_quality` config-mismatch
+theory raised before this diagnostic — `psramFound() == 1` confirms
+PSRAM is genuinely detected and wired through this Arduino-core build;
+the failure happens at the sensor-capability check, upstream of any
+PSRAM/frame-buffer config. Also ruled out: Arduino-core version
+regression — this is a hardware capability gap (no JPEG encoder
+silicon on this sensor), not a software/driver bug in a specific core
+release.
+
+### Measured results
+PID `0x2145` = `GC2145_PID` (confirmed against driver source, exact
+enum match, not inferred). No GC2145 driver `.c` source is vendored in
+the installed core (headers/prebuilt `.a` only), consistent with this
+being a secondary/clone sensor path in the driver rather than a
+first-class OV2640-equivalent.
+
+### How to verify
+Re-run the diagnostic print any time to reconfirm PID `0x2145` on this
+specific module; cross-check against `sensor.h`'s PID enum in any
+Arduino-ESP32 core install (`.../espressif__esp32-camera/driver/
+include/sensor.h`) if the core version ever changes.
+
+### Decision — genuine sensor limitation, not a fixable config issue
+Per developer instruction: since JPEG truly cannot be recovered on
+this sensor (no on-chip encoder exists to enable), the fallback is
+**not** streaming raw RGB565 over WiFi as a redesigned architecture.
+Instead: capture in the sensor's native working format (RGB565,
+confirmed live) and JPEG-encode each frame **on-device in software**
+using the `esp32-camera` driver's bundled `frame2jpg()`
+(`img_converters.h`) before the frame ever reaches WiFi/Lambda. This
+keeps plan.md §10.2/10.3/10.6/10.7's downstream architecture (JPEG
+payload-size budget, Lambda inference, dashboard/MJPEG streaming)
+intact — the conversion is purely a capture-time step, invisible
+downstream. Trade-off: software JPEG encoding is CPU-bound on the
+ESP32 core and will cap achievable FPS below what native hardware JPEG
+would have allowed — a tuning concern for the real Phase 13a capture
+sketch, not a further open architectural question. `pixel_format`
+stays RGB565 in the working config; JPEG conversion is added as an
+explicit post-capture step, not by reverting to `PIXFORMAT_JPEG`.
+
+### Open items
+- Phase 13a's real deliverable (the project-specific capture sketch)
+  is still unwritten. It should capture RGB565 + call `frame2jpg()`
+  per frame, not attempt `PIXFORMAT_JPEG` again on this module.
+- Achievable FPS with software JPEG encoding on this sensor/board is
+  not yet measured — expect it to be lower than the OV2640-based
+  12-28KB/frame JPEG bandwidth assumption in plan.md §10.3; needs
+  live measurement once the real capture sketch exists.
+- No firmware/edge/fusion/dashboard code was touched this session —
+  diagnostic-only, per developer instruction.
+
+### Next phase
+Write the Phase 13a capture sketch: RGB565 capture + `frame2jpg()`
+on-device conversion, then measure real achievable FPS before
+finalizing the Lambda/streaming bandwidth budget in plan.md §10.2/10.3.
+
+---
+
+## Phase 13a — real capture sketch written: GC2145 RGB565 + on-device JPEG conversion (2026-09-16)
+
+### What happened
+Wrote FireWatch's actual project-specific ESP32-CAM capture sketch,
+replacing the stock Arduino IDE `CameraWebServer` example used for the
+smoke test: `arduino/cam_node/cam_node.ino`. This closes the open
+decision from the smoke-test session and its addendum (RGB565 vs.
+JPEG root cause).
+
+- **Sensor confirmed GC2145, not OV2640** (PID `0x2145`, diagnosed and
+  root-caused in the prior addendum entry) — the espressif/esp32-camera
+  driver's own sensor table marks GC2145 `jpeg_support=false` /
+  OV2640 `true`. This is a real, permanent hardware limitation of this
+  specific module (a common OV2640-clone substitution on cheap
+  AI-Thinker-compatible boards) — not a PSRAM/menuconfig mismatch, and
+  no further JPEG-enablement attempt is warranted on this sensor.
+- **Capture format:** `PIXFORMAT_RGB565` at `FRAMESIZE_VGA` (640x480)
+  — the sensor's genuine native supported format, matching plan.md
+  §10.3's practical streaming target resolution. Double-buffered
+  (`fb_count = 2`, `CAMERA_GRAB_LATEST`) so capture and encode/send can
+  overlap.
+- **JPEG conversion:** each captured RGB565 frame is converted to JPEG
+  in software via the driver's own `frame2jpg()` (from
+  `img_converters.h`, already vendored in the installed esp32-camera
+  library — no new dependency) immediately before the frame reaches
+  the network. Wire format stays JPEG, unchanged from plan.md's
+  original assumption — only the on-sensor capture format differs from
+  what an OV2640 would have produced directly in hardware.
+- **Endpoints, mirroring the stock example's own convention** (for
+  compatibility with anything built against that shape later, e.g.
+  Phase 13c / edge ingestion): `GET /capture` (single JPEG response,
+  same as the stock example's `/capture` route) and `GET /stream`
+  (MJPEG `multipart/x-mixed-replace` stream, same boundary convention
+  as the stock example's `/stream` route). WiFi is HOME-only,
+  hardcoded credentials — the two-context WiFiManager switching from
+  plan.md §10.4 is explicitly NOT built in this sketch, kept minimal
+  so the RGB565->JPEG path could be verified in isolation first.
+- **Flagged and commented in the sketch itself, not silently absorbed:**
+  software JPEG encoding is CPU-bound on the ESP32's own core (GC2145
+  has no hardware JPEG encoder to offload to, unlike the OV2640 the
+  original plan assumed) — a real per-frame latency cost on top of
+  capture + WiFi send that plan.md §10.3's "640x480 @ 5fps" line never
+  budgeted for. `handle_capture()` times the `frame2jpg()` call itself
+  and prints `RGB565->JPEG convert: <ms>, <bytes>` to Serial so this
+  cost is directly observable once run on real hardware.
+
+### Measured results
+Not yet run on hardware this session — sketch written and reviewed,
+not flashed/tested. No conversion-latency or achievable-FPS numbers
+exist yet.
+
+### How to verify
+Flash `arduino/cam_node/cam_node.ino` (fill in `WIFI_PASSWORD` first),
+open Serial Monitor at 115200 baud to confirm "Camera init OK" + the
+assigned IP, then hit `http://<ip>/capture` for a single JPEG and
+`http://<ip>/stream` in an MJPEG-capable viewer (e.g. VLC network
+stream, or a `<img src="http://<ip>/stream">` tag) to confirm the
+conversion path works end-to-end. Watch Serial for the
+`RGB565->JPEG convert: <ms>` line on each `/capture` hit and for
+sustained `/stream` throughput to get a real achievable-FPS number.
+
+### Open items — explicitly flagged, not silently absorbed
+- **Achievable FPS with the added software JPEG-conversion step is NOT
+  YET MEASURED and may fall short of plan.md §10.3's 640x480@5fps
+  target**, which assumed the OV2640's on-chip hardware encoder doing
+  this step for free. This must be measured live on real hardware
+  before treating that bandwidth/cost target as still valid; if it
+  falls short, the fallback options (not yet decided, not implemented
+  here) are: lower resolution, lower `JPEG_QUALITY`, or accept a lower
+  fps than 5.
+- Two-context WiFiManager switching (plan.md §10.4, HOME vs. college
+  shared-hotspot) is not implemented in this sketch — HOME-only
+  hardcoded credentials, deliberately minimal for this verification
+  step.
+- `frame2jpg()`'s output buffer is allocated internally by the driver
+  (documented as caller-owned, freed via `free()` in this sketch after
+  each send) — no buffer-management issue expected, but not yet
+  stress-tested for leaks under sustained `/stream` use.
+- No edge/, fusion.py, or dashboard code was touched — this sketch is
+  a standalone Arduino project, camera board only, no sensor wiring.
+
+### Next phase
+Flash and measure: confirm the conversion path works end-to-end, get a
+real achievable-FPS number under `/stream`, and decide whether plan.md
+§10.2/§10.3's bandwidth/cost estimates need updating for the software-
+JPEG-conversion cost this session made explicit.
+
+---
+
+## Phase 13a — FPS measured, narrow-FOV bug root-caused and fixed
+**Date:** 2026-09-16
+**Status:** COMPLETE (FPS target cleared; FOV bug fixed and developer-confirmed live)
+
+### What was built
+- `arduino/cam_node/cam_node.ino`: `config.frame_size` changed from
+  `FRAMESIZE_VGA` to `FRAMESIZE_QVGA` (320x240), with the VGA baseline
+  measurement preserved in a comment for the record.
+- New `widen_fov_qvga()` function + call site in `setup()` right after
+  `camera_init()` succeeds: a runtime register poke (Option B) that
+  fixes a narrow-FOV bug found during QVGA testing.
+
+### Key decisions
+- **FPS: QVGA adopted over VGA, plan.md §10.3's 5fps figure superseded
+  by measurement.** Live-measured `frame2jpg()` conversion time:
+  VGA ~480-500ms/frame (~2fps), QVGA ~97-109ms/frame (~10fps, confirmed
+  again post-FOV-fix at 103ms). QVGA clears plan.md §10.3's original
+  5fps target and is comfortably inside the real, reasoned latency
+  budget (info.md §4.3: phone alert ≤30s block/≤15s target; vision's
+  TemporalVoter 5-of-8 window fills in ~4s even at 2fps, let alone
+  10fps) — the 5fps figure itself was never load-bearing against that
+  budget, it was a streaming/UX assumption inherited from the original
+  OV2640-hardware-JPEG plan. Model input is resized to 224x224
+  regardless of source resolution (`edge/vision.py` `_preprocess()`),
+  so QVGA source costs nothing at inference time.
+- **Narrow-FOV bug root-caused, not assumed.** Symptom: `/stream` and
+  `/capture` showed a tight crop (a few inches of a door's surface at
+  normal distance) that did NOT widen with camera distance — ruling out
+  a lens characteristic and pointing at a software capture-window
+  issue. Confirmed via the actual upstream driver source
+  (`espressif/esp32-camera` `sensors/gc2145.c` `set_framesize()`,
+  subsample-mode path — confirmed via this toolchain's `sdkconfig`
+  that `CONFIG_GC_SENSOR_SUBSAMPLE_MODE=y` is the mode actually
+  compiled, not windowing mode): the ratio-selection loop
+  unconditionally does `if (framesize >= FRAMESIZE_QVGA) i = 1;`,
+  skipping `subsample_cfgs[0]` (the 1/3 ratio, the widest available
+  FOV) for every framesize at or above QVGA. At QVGA this lands the
+  loop on the 1/2 ratio, giving a sensor read-out window of only
+  640x480 out of the full 1600x1200 UXGA array (~40% width/height)
+  before the 2:1 subsample to the 320x240 output — a real, fixed,
+  sensor-pixel-space crop, matching the distance-independent symptom
+  exactly. A genuine driver ratio-selection default, not a
+  GC2145-vs-OV2640 register mismatch (the subsample path is
+  sensor-model-agnostic).
+- **Fix: Option B (runtime register poke in the sketch), not Option A
+  (patched local driver copy).** Per developer instruction, Option B
+  was tried first and accepted since it produced a clean, stable
+  result — Option A was never needed. `widen_fov_qvga()` replays the
+  same register writes `set_framesize()` would have issued had `i`
+  started at 0 (the 1/3 ratio, `subsample_cfgs[0]` =
+  `{140, 420, reg0x99=0x33, rest 0x00}`), widening the sensor window
+  from 640x480 to 960x720 (60% of UXGA) while the QVGA 320x240 output
+  frame stays unchanged. Implemented via the driver's own public
+  `sensor_t->set_reg()` API (reached through `esp_camera_sensor_get()`)
+  — no forked or in-place-edited copy of the `esp32-camera` library;
+  the fix lives entirely in `cam_node.ino`. Register addresses
+  (`gc2145_regs.h`'s `P0_CROP_ENABLE`, `P0_ROW_START_*`,
+  `P0_COL_START_*`, `P0_WIN_HEIGHT_*`, `P0_WIN_WIDTH_*`,
+  `P0_SUBSAMPLE` + tuning block `0x9b-0xa2`, `P0_OUT_WIN_*`) are not a
+  public esp32-camera header, so they're reproduced as commented
+  literals in the sketch, each annotated with its symbolic name for
+  traceability.
+- **Maintenance risk flagged explicitly (per developer instruction):**
+  `widen_fov_qvga()` depends on raw GC2145 register addresses and this
+  exact `esp32-camera` driver version's `subsample_cfgs` table and
+  write order. A future arduino-esp32/esp32-camera library update
+  could change the ratio table, the register map, or fix the `i=1`
+  skip upstream — any of which could silently make this poke redundant,
+  wrong, or conflicting with a new default. Commented in the sketch:
+  re-verify against the then-current `gc2145.c` before assuming it
+  still applies, if FOV regresses after a toolchain update.
+
+### Measured results
+- VGA `frame2jpg()`: ~480-500ms/frame (~2fps).
+- QVGA `frame2jpg()`, pre-FOV-fix: ~97-109ms/frame (~10fps).
+- QVGA `frame2jpg()`, post-FOV-fix (960x720 sensor window instead of
+  640x480, same 320x240 output): 103ms/frame, 2677 bytes — no
+  meaningful change from the pre-fix range, consistent with
+  `frame2jpg()` operating on the final 320x240 RGB565 output buffer
+  rather than the raw sensor window (the larger window is subsampled
+  down inside the sensor before the ESP32 ever receives it).
+- FOV, developer-confirmed live via the same physical distance-test
+  method as the original bug report: register poke applied cleanly
+  (Serial log showed "widen_fov_qvga: applied 1/3 subsample ratio
+  (960x720 sensor window, was 640x480)" immediately after camera init,
+  followed by normal WiFi connect — no reset, no brownout, no
+  instability observed on this clone sensor). Visual result: "not as
+  wide as mac camera but good enough" (developer's words) — a real,
+  visible improvement over the pre-fix tight crop, though still
+  narrower than the MacBook webcam's field of view used through
+  Phases 0-11. Accepted as sufficient; Option A not attempted.
+
+### How to verify
+Flash `arduino/cam_node/cam_node.ino`, open Serial Monitor at 115200
+baud, confirm "Camera init OK" -> "widen_fov_qvga: applied 1/3
+subsample ratio..." -> normal WiFi connect with no reset in between.
+Hit `http://<ip>/capture` or `/stream` and compare framing against a
+known scene at a fixed distance (framing should not change if the
+camera is moved closer/further) — expect noticeably more scene in
+frame than the original 640x480-window crop, though still narrower
+than a typical laptop webcam.
+
+### Open items
+- FOV is "good enough" per developer judgment, not maximal — the
+  driver's own 1/3 ratio was the widest option in `subsample_cfgs`;
+  going wider would require a still-more-invasive register approach
+  (e.g. disabling crop/subsample entirely and doing the downsample
+  entirely off-sensor), not currently planned or requested.
+- plan.md §10.3's "practical streaming target: 640x480 @ 5fps" line is
+  now stale and should be updated to record QVGA (320x240) as the
+  chosen capture resolution with the measured ~10fps figure, replacing
+  the VGA/5fps assumption — not yet done in this entry, queued as the
+  next documentation step.
+- Low-light image quality: separately flagged in context.md §7 as a
+  deferred, not-yet-investigated item (dim/dark room produces a dark,
+  grainy QVGA image) — deliberately not tested in this session to
+  avoid conflating FOV, normal-light quality, and low-light behavior
+  at once. See context.md for the full note.
+- No `edge/`, `fusion.py`, or dashboard code was touched — this
+  remains a standalone Arduino project, camera board only.
+
+### Next phase
+Update plan.md §10.3 and context.md to record QVGA + ~10fps as the
+real, measured configuration (superseding the VGA/5fps assumption),
+then continue Phase 13a toward its remaining deliverables: normal-
+lighting image-quality confirmation (the separately reported
+"unclear" observation, still not root-caused), and eventually wiring
+this sketch's `/capture`/`/stream` output into the Lambda inference
+path per plan.md §10.6.
+
+---
+
+## Phase 13d — plain ESP32 DevKit sensor firmware SKELETON written, NOT calibrated, NOT live-tested (2026-09-16)
+
+Wrote `arduino/sensor_esp32_node/sensor_esp32_node.ino`: first-ever
+project sketch for this board (previously only read manually via
+Serial Monitor). Structure only — no burn-in/calibration values exist
+yet (Phase 13b/13c not run this session), so nothing below has been
+flashed or verified against real hardware behavior.
+
+What's in the sketch:
+- Analog read loop, MQ-2 on GPIO34 / MQ-135 on GPIO35 (both ADC1,
+  input-only, via the confirmed 270/270 ohm 1:1 dividers), 12-bit ADC
+  (`analogReadResolution(12)`) explicit given this is new hardware vs.
+  the retired Arduino Uno's 10-bit ADC. No numeric constant carried
+  over from `arduino/sensor_node.ino` — only the general 1 Hz polling
+  structure did.
+- `GAS_WARMUP_SECONDS = 240`, reused as-is from `config.yaml`'s
+  `gas_warmup_seconds` (the restored, non-trial value) — no documented
+  reason found for this board to need a different number, so it was
+  not changed.
+- Threshold/baseline constants are named, clearly-flagged placeholders
+  (`MQ2_BASELINE_PLACEHOLDER`, `MQ2_WARN_THRESHOLD_PLACEHOLDER`,
+  `MQ2_DANGER_THRESHOLD_PLACEHOLDER` and MQ135 equivalents), all set to
+  `-1` with a comment block stating they come from Phase 13b's
+  post-burn-in calibration (not yet run) and must not be treated as
+  real. Comparisons are structured so a `-1` placeholder cannot
+  accidentally read as "exceeded."
+- N-of-M sustained-duration voting structure mirroring
+  `edge/vision.py`'s `TemporalVoter` pattern: a rolling buffer of the
+  last M readings per sensor, alarms only if N of them exceed
+  threshold. `VOTE_WINDOW_M_PLACEHOLDER` (5) and
+  `VOTE_THRESHOLD_N_PLACEHOLDER` (3) are named placeholder constants,
+  not hardcoded into control flow — genuinely undecided pending Phase
+  13c, not derived from `fusion.py`'s real logic per the standing
+  project rule against inventing numbers ahead of that decision.
+- Buzzer trigger (GPIO33) is local-only, direct `digitalWrite()`, with
+  no dependency on WiFi state anywhere in the control flow — verified
+  by inspection that it is not gated on `WiFi.status()` or similar, so
+  it keeps working whether WiFi is mid-connect, dropped, or never
+  configured (plan.md §10.5, info.md local-alarm-before-network
+  principle). Note: the buzzer wire itself was physically disconnected
+  during burn-in and must be reconnected before any buzzer-dependent
+  test — firmware cannot fix that.
+- WiFi: connect-only, reusing `arduino/cam_node.ino`'s HOME-network
+  pattern (credentials + `WiFi.begin()` + Serial IP printout), with a
+  bounded connect-attempt loop (15s timeout, falls through to
+  gas-only/local-only rather than hanging forever). **Deliberately no
+  MQTT client, no publish/subscribe, no payload/topic structure** —
+  plan.md §10.6 leaves the sensor board's data-transport mechanism as
+  Phase 13f's open decision. This board connects to WiFi and is
+  reachable, but transmits no gas data yet, by design.
+
+### Status
+Firmware skeleton written, **NOT yet calibrated, NOT yet live-tested**.
+Not marking Phase 13d complete — completion requires Phase 13b/13c's
+real values plugged in, a flash to the actual board, and a live
+verification pass (including the buzzer wire reconnected).
+
+### Open items
+- Phase 13b (post-burn-in calibration) and 13c (N-of-M decision) still
+  outstanding — this sketch cannot be meaningfully tested end-to-end
+  until both land.
+- Buzzer wire needs physical reconnection before any buzzer test.
+- Phase 13f (sensor board's data-transport mechanism to the
+  fusion/dashboard layer) is explicitly not addressed here — WiFi
+  connects but transmits nothing yet.
+
+### Update: multi-sample averaging added to analogRead()
+Added a `readAveraged(pin, samples)` helper (8 samples, 2ms apart —
+both named, tunable constants: `ADC_SAMPLE_COUNT`,
+`ADC_SAMPLE_DELAY_MS`) and used it for both `MQ2_PIN` and `MQ135_PIN`
+in place of the previous single-sample `analogRead()` calls. Reason:
+raw single-sample `analogRead()` on the ESP32 ADC is inherently noisy
+(known ESP32 ADC characteristic, confirmed this session — successive
+readings waver between adjacent codes independent of the MQ sensors
+themselves), and Phase 13b calibration should not be run against that
+noise floor. 8 samples * 2ms = 16ms per sensor (~32ms both), negligible
+against the 1000ms `SAMPLE_INTERVAL_MS` cadence, so 1Hz reporting is
+unaffected. Averaged value stays a plain int on the same 0-4095 12-bit
+scale — no normalization/scaling introduced, so it doesn't change what
+a later 13b calibration value means. Threshold logic, vote-buffer
+logic, warmup gating, and the buzzer path are unchanged.
+
+### UNRESOLVED: board-movement causes reading jumps
+**Not fixed. Documented as a known constraint, not solved.**
+Physically moving the ESP32 board still causes gas readings to jump
+even with jumper wires appearing seated and the board mounted. Mesh
+caps are already present on both MQ sensors (standard on these
+modules), so airflow shielding is effectively already in place —
+that is not the remaining lever. Candidate causes, **none confirmed**:
+(a) Dupont jumper connections marginal under physical movement despite
+    appearing seated.
+(b) Divider resistor connections are friction-fit rather than
+    soldered, and may be movement-sensitive.
+(c) Residual genuine airflow response that the mesh caps diffuse but
+    don't fully eliminate.
+Practical mitigation chosen for now (not an engineering fix): FireWatch's
+real deployment case is a fixed-mounted sensor, so the board is to be
+mounted and left undisturbed rather than handled during normal
+operation. Movement sensitivity is recorded here as a known constraint
+of this hardware, not something engineered away. Multi-sample
+averaging (above) does not address this — it smooths per-sample ADC
+jitter, not movement-induced excursions, which are a different failure
+mode.
+
+**Update 2026-09-17 — `SUSPECT_JUMP` stopgap flag added (still not a
+fix).** The user cannot solder/glue (parts must stay reusable) or do a
+final fixed mount yet, so a firmware-side observability stopgap was
+added to `sensor_esp32_node.ino`: `isSuspectJump()` compares each
+sensor's `readAveraged()` output against the mean of its last
+`JUMP_HISTORY_LEN=5` accepted readings and, when the deviation exceeds
+`JUMP_FLAG_DELTA_PLACEHOLDER`, prints `[SUSPECT_JUMP] mq2=...(flagged)
+mq135=...(flagged)` to Serial alongside the normal CSV line.
+`JUMP_FLAG_DELTA_PLACEHOLDER` is left at `-1` (disabled) — no real
+noise-floor number exists yet, so none was guessed; the flag is fully
+inert until it's set. Critically, **flagged samples are never dropped
+or suppressed** — they still flow into averaging, threshold, vote, and
+buzzer logic unchanged, specifically because a genuine fast-onset gas
+event can also look like a jump, and a stopgap tuned for a wiring
+glitch must never be able to silently mask a real detection. This adds
+visibility for later log review, it does not resolve root cause (a),
+(b), or (c) above. Also removed the temporary `[DEBUG pin X]
+min=.../max=.../avg=...` print added to verify multi-sample averaging
+was working — its job is done.
+
+Separately, the user is buying new jumper wires and reseating
+connections tomorrow (2026-09-18) as a real attempt at candidate cause
+(a) — that is a physical action, not a firmware change, and is not
+represented in this file until its results are known.
+
+**Interim baseline procedure (no final mount required), for Phase 13b
+prep only — NOT a substitute for real post-mount calibration:**
+1. Place the board on a stable, flat, non-vibrating surface; tape or
+   weight it down at the corners so it can't shift.
+2. Do not touch the board, wires, or its surface for the entire
+   `GAS_WARMUP_SECONDS=240` warmup plus the logging window below.
+3. After warmup ends (sketch stops printing `WARMUP`), log 15 minutes
+   of completely undisturbed readings from the existing
+   `mq2Raw,mq135Raw,STATUS` Serial CSV output.
+4. Compute the **median** (not mean) of `mq2Raw` and `mq135Raw`
+   separately over that window — median resists any residual jump
+   artifact that sneaks in despite steps 1–2, unlike a mean.
+5. Record the result here as `INTERIM_BASELINE (PROVISIONAL,
+   pre-mount)` once run — kept separate from the firmware's
+   `MQ2_BASELINE_PLACEHOLDER`/`MQ135_BASELINE_PLACEHOLDER` constants,
+   which stay `-1` and are reserved for Phase 13b's real post-mount
+   calibration.
+6. This interim baseline must be re-taken once a real fixed mount
+   exists — mount-induced strain on the same marginal connections
+   (candidate causes a/b) could shift the noise floor again.
+(Procedure not yet executed as of this entry — no interim numbers
+recorded yet.)
+
+### Hardware update 2026-09-17 — divider changed, breadboard replaces direct jumpers
+Sensor board rewired from direct jumper connections to a
+**breadboard-based** design, with a **changed voltage divider ratio**.
+This is a real hardware change affecting real numbers, not just a
+wiring cleanup.
+
+- **OLD divider:** 270Ω/270Ω per sensor (1:1 ratio, output = input ×
+  0.5).
+- **NEW divider:** 10kΩ/15kΩ per sensor (2:3 ratio, output = input ×
+  0.6) — confirmed still under the 3.3V GPIO limit for a 5V sensor
+  output (5V × 0.6 = 3.0V), but with **less safety margin** than the
+  old 1:1 ratio. Also much lower current draw than the old low-
+  resistance divider (kΩ range vs. Ω range) — a different design
+  philosophy, both individually valid, just distinct from what was
+  previously reasoned through and logged for the 1:1 divider.
+- **Reason for the change:** the direct-jumper topology was the
+  suspected/candidate root cause of the previously-logged UNRESOLVED
+  movement-jump issue (Dupont connections marginal under physical
+  movement, per candidate cause (a) above). Soldering was not
+  available (parts must stay reusable), so the fix taken was moving
+  to a breadboard, which holds component leads more securely than
+  direct point-to-point jumpers, without requiring solder.
+- **New wiring topology** (breadboard-based, identical pattern for
+  both sensors): ESP32 GND → breadboard negative rail; ESP32 5V/Vin →
+  breadboard positive rail; sensor VCC → positive rail; sensor GND →
+  negative rail; sensor A0 → breadboard row A; 10kΩ resistor row A →
+  row B; 15kΩ resistor row B → negative rail; row B (the divider
+  junction) → the sensor's GPIO (34 for MQ-2, 35 for MQ-135). Each
+  sensor uses its own separate breadboard rows.
+
+**ALL PREVIOUS RAW READING DATA FROM THIS SESSION IS NOW VOID** under
+the new ratio. Do not treat any of tonight's logged 12-bit numbers —
+the ~50-190 range values, the warmup-period readings, the
+`SUSPECT_JUMP` movement-jump numbers (~105→~170-185), or anything else
+captured under the OLD 270Ω/270Ω divider — as reusable, comparable, or
+even rescalable once the rewire is physically done. A different
+divider ratio changes what ADC code a given real-world sensor output
+voltage produces, so these numbers simply don't translate to the NEW
+10kΩ/15kΩ divider's output scale for the same real-world gas
+concentration. This is a full invalidation, not a "needs rescaling"
+situation.
+
+**Firmware impact: none, confirmed by inspection.** The divider
+ratio/resistor values live entirely in physical hardware.
+`sensor_esp32_node.ino` reads raw 12-bit `analogRead()` values via
+`readAveraged()` regardless of what divider produced them, and no
+divider ratio or resistor value is hardcoded anywhere in the sketch's
+logic. Grepped the full file for "270", "0.5", "divider", "ratio" —
+the only hit was the old "270/270 ohm 1:1 divider" wording in the
+top-of-file hardware comment block, which has been corrected to
+describe the new 10kΩ/15kΩ topology; no calculation, threshold, or
+scaling logic referenced the old ratio anywhere. No code change was
+needed or made.
+
+**Phase 13b (baseline capture) needs a full FRESH START, not a
+rescale.** Any prior informal baseline observations from tonight
+(including anything gathered via the interim baseline procedure above,
+if it was run before this rewire) are void under the new hardware.
+Phase 13b must restart from zero against the new 10kΩ/15kΩ divider —
+this includes both the interim provisional baseline (procedure above,
+still valid as a *method*, but must be re-run for real numbers) and
+the eventual real post-mount Phase 13b calibration.
+
+---
+
+### MQ sensor near-zero WARMUP readings — ADC floor + divider margin investigation (2026-09-17)
+
+**Divider changed again, same night, after the 10kΩ/15kΩ entry above:**
+both sensors were rewired a second time to a **22kΩ(top)/10kΩ(bottom)
+divider (×0.3125 scaling, max ~1.56V for a 5V sensor output)**. This
+second change was not logged when made; it is recorded now, retroactively,
+alongside this investigation. `plan.md` §10.0a updated to match.
+
+**Trigger:** MQ-135 readings during WARMUP were reading near-zero.
+Live-tested by bringing a hand sanitizer stimulus close to the MQ-135
+sensor — the reading rose measurably from ~0, confirming the sensor and
+signal path both work. **This is not a broken circuit/wiring fault.**
+MQ-2 shows the same pattern less severely (values ~15-38, still low).
+Conclusion: this is a resolution/floor problem, not a hardware fault.
+
+**Angle 1 — firmware ADC attenuation vs. the divider's real signal range.**
+`sensor_esp32_node.ino` never calls `analogSetAttenuation()`; the ESP32
+Arduino core defaults ADC1 pins to **11dB attenuation**, whose
+characterized-accurate input window (per Espressif's ADC calibration
+docs) is approximately **150mV-2450mV**. Below ~150mV, ADC response
+compresses/flattens toward 0 regardless of true input voltage — this
+alone plausibly explains near-zero clean-air readings.
+
+The 22k/10k divider's actual output range is **0-1.56V** (5V sensor
+supply × 0.3125), which only spans the bottom ~64% of 11dB's accurate
+window (1.56V of 2450mV) — meaning ~900mV (36%) of the ADC's most
+accurate zone is never used, wasting resolution. **`ADC_ATTEN_DB_6`**
+(~150mV-1750mV accurate window) is a better match for this divider's
+true 0-1.56V range than the DB_11 default, concentrating the 12-bit
+codespace more tightly over the voltages actually seen.
+
+Important limit: **the ~150mV accurate floor is roughly constant
+across attenuation settings** — it's a fixed ADC characterization
+property, not something attenuation choice removes. So DB_6 improves
+resolution/spread but cannot rescue a signal whose true voltage is
+already below ~150mV before the ADC even sees it.
+
+**Angle 2 — does the 22k/10k ratio itself leave real margin above the
+150mV floor?** MQ-2/MQ-135 breakout modules have an onboard RL trim
+pot, so exact clean-air Vout varies board-to-board; no datasheet-exact
+figure is logged for these specific modules, so this reasons from a
+plausible clean-air Vout range of **0.3V-1.0V at 5V supply** (commonly
+cited for these modules) — **flagged explicitly as an assumption, not
+a measured fact**, pending a real multimeter reading at the sensor's
+own A0 pin (before the divider).
+
+| Ratio | Scale | Max V (5V in) | ADC sees @ 0.3V Vout | ADC sees @ 0.5V Vout |
+|---|---|---|---|---|
+| 22k/10k (current, ×0.3125) | 0.3125 | 1.56V | **94mV — below 150mV floor** | 156mV (+6mV margin only) |
+| 10k/10k (1:1, ×0.5) | 0.5 | 2.50V | 150mV (right at floor) | 250mV (+100mV) |
+| 10k/15k (2:3, ×0.6 — the prior logged ratio) | 0.6 | 3.00V | 180mV (+30mV) | 300mV (+150mV) |
+
+At the low end of the plausible clean-air range, **22k/10k likely puts
+the ADC's actual input below its accurate floor before attenuation is
+even considered** — no firmware attenuation change can fix a signal
+that's already too low at the sensor-output stage. 10k/15k (or a
+similar ×0.5-0.6 ratio) gives comfortable, real margin across the
+whole plausible range instead of sitting right at (or under) the edge.
+
+**Verdict — both angles are real, not either/or:**
+1. Firmware: `ADC_ATTEN_DB_11` default is mismatched to this divider's
+   ≤1.56V output; `ADC_ATTEN_DB_6` would use the ADC's resolution
+   better for the range actually seen.
+2. Hardware: the ×0.3125 (22k/10k) ratio is suspected to leave too
+   little (or negative) margin above the ADC's ~150mV floor for
+   plausible clean-air sensor outputs, independent of attenuation.
+
+**Fix applied:** `analogSetAttenuation(ADC_11db)` replaced with
+`analogSetAttenuation(ADC_6db)` in `setup()`, applied per-pin to both
+MQ2_PIN and MQ135_PIN. **Divider ratio is flagged, not yet
+changed back** — reverting 22k/10k to 10k/15k (or similar) requires a
+physical rewire, which is the user's action, not firmware's. Do not
+treat the attenuation fix alone as resolving this until re-tested
+against real WARMUP readings; if near-zero readings persist after the
+attenuation change, that is confirmation the divider ratio itself
+needs to be physically reverted.
+
+**`readAveraged()` helper:** already present in the current firmware
+(added earlier this session, see top-of-file comment on
+`ADC_SAMPLE_COUNT`/`ADC_SAMPLE_DELAY_MS`) — no further averaging
+change was needed beyond what already exists; confirmed still correct
+and untouched by this investigation.
+
+---
+
+### Attenuation fix confirmed live; 22k/10k divider is FINAL, not reverted (2026-09-17, later same night)
+
+**Update to the entry directly above:** that entry left the divider
+ratio "flagged, not yet changed back," pending re-test. Re-tested
+tonight with `analogSetAttenuation(ADC_6db)` applied — **confirmed
+resolved.** The 22k(top)/10k(bottom) divider (×0.3125, ~1.56V max) is
+now CONFIRMED WORKING and final; it is not being reverted to 10k/15k.
+The earlier "FLAGGED SUSPECT" language on the divider ratio, and the
+header-comment wording carried over from the 10k/15k stage, are now
+stale and have been corrected in `sensor_esp32_node.ino` and
+`context.md`.
+
+**Live stimulus test results (informational evidence, NOT Phase 13b
+calibration numbers):**
+- **MQ-2 + unlit gas-stove gas:** strong, correct response — baseline
+  ~90-100, spiked to 147, decayed back down over ~25 samples. Textbook
+  response-and-decay shape.
+- **MQ-135 + same gas-stove stimulus:** weak response. Expected, not a
+  concern — MQ-135 is tuned for CO2/NH3/general air-quality gases, not
+  primarily combustible gas, unlike MQ-2.
+- **MQ-135 + hand sanitizer vapor (earlier same session):** clean,
+  correct response-and-decay curve. Combined with the stove-gas result
+  above, this **rules out "MQ-135 hardware/circuit broken"** as an
+  open question — the sensor and signal path are both confirmed
+  functioning. The near-zero WARMUP readings that originally prompted
+  this whole investigation are fully explained by the attenuation
+  mismatch, now fixed.
+
+**Firmware changes finalized in this pass** (`sensor_esp32_node.ino`):
+1. `analogSetAttenuation(ADC_6db)` added in `setup()`, before any
+   `analogRead()` calls, with a comment explaining why 6db (not the
+   11db default) is correct for this divider's ~1.56V ceiling, and a
+   note that a future divider change would need this setting
+   revisited too.
+2. Top-of-file hardware comment corrected: divider is
+   **22k(top)/10k(bottom), ×0.3125, ~1.56V max** — the stale
+   "10k/15k (2:3)" wording (accurate for the *first* 2026-09-17
+   rewire, not the final one) has been replaced.
+3. The comment claiming "the divider change requires no firmware
+   change" has been corrected — true for the sample/vote/threshold
+   control-flow logic (still divider-agnostic, still no resistor
+   value hardcoded there), **not true in general**, since attenuation
+   is itself a firmware setting that depends on the divider's output
+   range.
+4. `readAveraged()` (8 samples, 2ms delay), calibration placeholders,
+   N-of-M vote logic, buzzer logic, and WiFi connect logic are all
+   **unchanged** — none of those were implicated by tonight's finding
+   and none needed touching.
+
+**Phase 13b is still required and has NOT been run.** Tonight's
+stimulus tests demonstrate the measurement foundation (divider +
+attenuation) now works correctly — they are not a substitute for real
+burn-in and baseline capture. No `_PLACEHOLDER` constant has been
+replaced with a real number. Phase 13b must be run fresh against
+*this* corrected build before any threshold is trusted.
+
+---
+
+### Phase 13b — data-capture + calibration tooling written (2026-09-17)
+
+**Three new deliverables, all separate from production firmware.
+`arduino/sensor_esp32_node/sensor_esp32_node.ino` is UNCHANGED by this
+pass** — no placeholder constant touched, no control-flow edited.
+
+1. **`arduino/sensor_calibration_capture/sensor_calibration_capture.ino`**
+   (new) — a DATA-CAPTURE-ONLY sketch to flash after burn-in and run
+   during real stimulus tests. Reuses sensor_esp32_node.ino's pin map
+   (GPIO34=MQ2, GPIO35=MQ135), 12-bit resolution, `ADC_6db`
+   attenuation, and `readAveraged()` (8 samples/2ms) verbatim, plus the
+   `gas_warmup_seconds=240` gate. No buzzer, no N-of-M voting, no
+   WiFi, no threshold logic — it computes nothing. Prints one strict
+   CSV-like line per 1Hz sample cycle:
+   `<millis_since_boot>,<mq2_avg>,<mq135_avg>,<WARMUP|OK>`. This format
+   is documented in the sketch's header and must not change without
+   updating deliverable 3 to match.
+2. **`arduino/buzzer_test/buzzer_test.ino`** (rewritten — the prior
+   version was stale, targeting the retired Arduino Uno's D8 pin with
+   no completion signal or Serial output). Now: isolated hardware
+   check, GPIO33 (matches sensor_esp32_node.ino's `BUZZER_PIN`), waits
+   3s on boot for the Serial Monitor to be opened, toggles HIGH 1s/LOW
+   1s five times, prints "buzzer test complete". No sensor reads, no
+   WiFi, no warmup gate — useful any time buzzer wiring is touched or
+   suspected faulty, independent of calibration state.
+3. **`tools/calibrate_sensors.py`** (new) — reads deliverable 1's
+   live serial output (pyserial, port+baud as CLI args, default baud
+   9600 matching the sketch's `Serial.begin(9600)`), skips/logs
+   malformed lines instead of crashing, ignores WARMUP lines entirely,
+   and tracks running MIN/MAX per sensor live once OK lines arrive
+   (printing an updating `MQ2: cur=... min=... max=... | MQ135: ...`
+   status line). Non-blocking keyboard commands via a daemon stdin
+   thread: `b` marks current MIN as confirmed baseline, `p` marks
+   current MAX as confirmed peak (both sensors at once, clearly
+   labeled). On `q`/Ctrl+C, computes and prints, for each sensor with
+   both baseline and peak marked:
+   `range = peak - baseline`, `WARN_THRESHOLD = baseline + 0.30*range`,
+   `DANGER_THRESHOLD = baseline + 0.60*range` — the same 0.30/0.60
+   convention already used elsewhere in this project (plan.md
+   calibration formula). If either mark is missing for a sensor, prints
+   a clear "not computed" message rather than guessing. Final output
+   is a copy-pasteable block naming the exact
+   `sensor_esp32_node.ino` placeholder constants
+   (e.g. `MQ2_BASELINE_PLACEHOLDER -> 32`) — **the script never writes
+   to the .ino file itself**; the developer transfers the numbers
+   manually, consistent with how every other threshold/calibration
+   decision in this project has been handled (a deliberate, reviewed
+   step, not an automated edit).
+
+**Real Phase 13b workflow, going forward:** burn-in ->
+flash `sensor_calibration_capture.ino` -> run
+`python tools/calibrate_sensors.py <port>` against its serial output
+during real stimulus tests (gas stove for MQ-2, whatever stimulus for
+MQ-135) -> developer manually pastes the printed baseline/threshold
+numbers into `sensor_esp32_node.ino`'s existing `*_PLACEHOLDER`
+constants as a reviewed, deliberate step. No burn-in or live stimulus
+test has been run yet this session — these are tooling deliverables
+only, not a completed calibration.
+
+---
+
+## Phase 13a-2 addendum — ESP32-CAM live-test accuracy investigation, CLOSED (2026-09-17)
+
+**Context:** edge/main.py gained a `--video-source` flag (edge/camera.py's
+`Camera` now accepts a webcam device index OR an MJPEG stream URL) so the
+ESP32-CAM (arduino/cam_node/cam_node.ino) could be tested as the vision
+loop's real capture source, not just the laptop webcam. First live test
+against a fire video showed the ESP32-CAM stream mostly producing
+SAFE/WATCH where the webcam on identical footage produced sustained
+WARNING (visual flame) alarms — investigated end-to-end before assuming
+either "screen video is a weak proxy" (Phase 1/5's existing TV/laptop
+hard-negative finding) or a camera-pipeline regression.
+
+**Investigation, in the order actually run:**
+
+1. **Side-by-side webcam vs. ESP32-CAM on identical footage** ruled out
+   "screen video is a weak proxy" immediately — the webcam handled the
+   same clip confidently (WARNING, alarm=True repeatedly), so the gap was
+   real, not just fire-on-a-screen being an inherently weak test.
+2. **FPS instrumentation added to `handle_stream()`** in cam_node.ino
+   (per-frame `capture=/convert=/send=` timing, additive-only). Measured:
+   `convert` (frame2jpg, software JPEG — this GC2145 clone sensor has no
+   hardware encoder, see the original Phase 13a header comment) is ~80%
+   of per-frame cost (~104ms of ~128ms total), steady across frames — not
+   jittery. Confirms the earlier "~480-500ms/frame at VGA" figure did not
+   apply to today's QVGA `/stream` path; measuring beat assuming.
+   Resulting steady FPS: ~7-8fps vs. the webcam's steady ~30fps.
+3. **RGB565 byte-order hypothesis tested and ruled out.** Live-tested
+   `jpgSetRgb565BE(false)` (espressif/esp32-camera's public toggle for
+   `frame2jpg()`'s RGB565->RGB888 unpacking, conversions/to_jpg.cpp) on
+   the theory that the driver's big-endian default didn't match this
+   clone sensor's real DVP byte order. Result: color went from a
+   red/pink cast to fully scrambled rainbow noise — confirms the
+   driver's default WAS correct; reverted immediately, documented in
+   cam_node.ino's setup() comment so it isn't re-attempted without new
+   evidence.
+4. **`votes_needed` sweep (5 vs 3) against the ESP32-CAM's real ~7-8fps.**
+   At `votes_needed=5`, the vote-to-alarm conversion ratio
+   (alarm=True rate / p_fire>=0.70 rate) on the ESP32-CAM stream was
+   0.13 — votes were rarely accumulating fast enough at this frame rate
+   to reach the threshold even when the model correctly saw fire. At
+   `votes_needed=3`, conversion ratio rose to 1.09, matching the
+   webcam's own 1.17 on the same test. Confirmed via matched-duration
+   side-by-side runs (webcam_run*.log / esp32_run*.log in repo root).
+5. **Root cause of the remaining accuracy gap: GC2145 sensor color
+   cast, not a voter/FPS issue.** Saved reference frames from each
+   source (webcam_frame.jpg / esp32_frame.jpg) showed the ESP32-CAM's
+   frame was a uniform, severe red/pink wash (measured: R/G=1.98,
+   R/B=2.44 channel means) while structure/edges stayed intact —
+   consistent with a chrominance-only corruption, not a luminance/focus
+   problem. Confirmed via the actual espressif/esp32-camera driver
+   source (sensors/gc2145.c) that this is NOT fixable via a runtime
+   driver call: `set_whitebal`, `set_wb_mode`, and `set_awb_gain` are
+   all wired to `set_dummy` for GC2145 — same driver-gap pattern as the
+   Phase 13a FOV subsample bug. The on-chip AWB tuning table
+   (gc2145_settings.h, loaded once via `reset()`) looked like standard
+   gray-world calibration on inspection, not an obviously wrong value,
+   so real hardware recalibration would need datasheet-level register
+   work with no guaranteed clean result.
+6. **Fix: gray-world white-balance correction in software**
+   (`edge/camera.py`, `Camera._correct_esp32_color_cast()`), applied
+   only when `source` is a stream URL (`isinstance(self.source, str)`)
+   — the webcam path (`Camera()`, default int device index) is
+   byte-for-byte unchanged. Scales each channel so its mean matches the
+   frame's overall gray mean; clips to uint8 range. Verified against
+   the saved reference frame: R/G/B channel means went from
+   B=80.0/G=98.7/R=195.0 (R/G=1.98) to B=120.1/G=120.4/R=124.0
+   (R/G=1.03) — visually confirmed the extreme red wash is gone and
+   flame/non-flame color contrast is now visible.
+
+**Combined result (both fixes together), matched-duration comparison
+(esp32_run5.log vs. webcam_run4.log):**
+
+| metric | before (votes_needed=5, no color fix) | after (votes_needed=3 + color fix) | webcam (same session) |
+|---|---|---|---|
+| p_fire>=0.70 hit rate | 11.0% | 35.6% | 50.7% |
+| alarm=True rate | 12.1% | 54.4% | 56.1% |
+| vote/hit-rate conversion ratio | 0.13 | ~1.0 | 1.17 |
+
+ESP32-CAM alarm rate is now close to parity with the webcam on the same
+footage. p_fire hit rate more than tripled but is still below the
+webcam's — attributed to QVGA's lower source resolution surviving the
+224x224 model resize, not investigated further this session (secondary
+effect, not the dominant gap).
+
+**Decision: `votes_needed` PERMANENTLY changed 5 -> 3 in both
+`config.yaml` and `config.example.yaml`** (2026-09-17). The camera
+source is now permanently the ESP32-CAM stream, not the laptop webcam
+Phase 5's original 5-8 sweep was tuned against — so Phase 5's
+production-held-at-5 decision no longer applies as-is.
+
+**Reopened, not yet re-closed: Phase 5's TV/laptop-fire false-positive
+question.** The original 5-8 `votes_needed` sweep (`logs.md` "Phase 5
+addendum — votes_needed sweep") that held production at 5 was run
+against the webcam path, never against the ESP32-CAM's slower,
+now-color-corrected feed. Lowering to 3 loosens the alarm bar in
+exactly the direction that sweep was trying to avoid. **Recommended
+next validation step: re-run the TV/laptop hard-negative eval
+(`eval/votes_needed_sweep.py` or equivalent) against the ESP32-CAM
+source specifically**, to confirm `votes_needed=3` still clears the
+<=2 alarm bar on that hard-negative category before treating this as
+fully closed, not just functionally shipped.
+
+**Not investigated this session, left open:** why ESP32-CAM's p_fire
+hit rate (35.6%) still trails the webcam's (50.7%) after the color fix
+— candidate causes are QVGA's lower source resolution and/or residual
+JPEG compression softness at `JPEG_QUALITY=12` (cam_node.ino), neither
+tested directly.
+
+---
+
+## Phase 13b redesign — relative (per-boot) baselines replace fixed absolute thresholds, pre-calibration (2026-09-20)
+
+**Evidence that triggered the redesign:** multi-day burn-in of
+`arduino/sensor_esp32_node/sensor_esp32_node.ino` on the corrected ADC
+configuration showed clean-air readings are stable *within* a single
+power-up (e.g. MQ-2 94-112, MQ-135 38-55 across one boot's session)
+but the level shifts *between* boots: MQ-2's clean-air level has
+started around ~90, ~120, ~180, and ~200 (raw 12-bit ADC counts) across
+different power cycles and board positions. This is consistent with
+normal MQ sensor behavior (heater thermal state at power-up, ambient
+temperature/humidity, airflow over the element) — not a fault, and not
+something the existing ADC/divider fix changes. A single fixed
+baseline/threshold captured once during calibration (the sketch's
+original Phase 13b plan) would false-alarm on a boot that happens to
+start with a high baseline, and would be under-sensitive (slower to
+alarm, or miss a smaller real event) on a boot that starts low.
+
+**Redesign, implemented pre-calibration (structure only, every numeric
+constant still a placeholder):**
+
+1. **Boot baseline capture.** After the existing `GAS_WARMUP_SECONDS`
+   (240s) gate, the board now collects `BASELINE_CAPTURE_SECONDS`
+   (60s) more of averaged readings and takes the **median** per sensor
+   as that boot's baseline. No alarm logic (threshold comparison,
+   voting, buzzer) runs during either gate — status prints
+   `BASELINE_CAPTURE` during the window, then a `BASELINE_CAPTURE
+   done: mq2=... mq135=...` line once complete.
+2. **Relative thresholds.** The old absolute
+   `MQ*_WARN/DANGER_THRESHOLD_PLACEHOLDER` constants are retired.
+   In their place: `MQ*_CALIBRATED_DELTA_PLACEHOLDER`, meant to be
+   filled from a real stimulus test's peak-minus-baseline (measured in
+   the *same* session, per the updated `tools/calibrate_sensors.py`).
+   At runtime, `WARN = boot_baseline + 0.30*delta`,
+   `DANGER = boot_baseline + 0.60*delta` — same 0.30/0.60 convention
+   as before, now computed relative to this boot's baseline instead of
+   a fixed number.
+3. **Slow baseline tracking + three safety guards.** The boot baseline
+   isn't frozen for the rest of the session — it slowly EMA-tracks
+   (`BASELINE_EMA_ALPHA = 0.001`, deliberately very slow) toward
+   ongoing readings, but only under three independent, safety-critical
+   guards (documented at length in the sketch itself, "BASELINE
+   TRACKING SAFETY GUARDS" block, since this is the one part of the
+   redesign with a genuine failure mode if any guard is removed):
+   - **Guard 1** — the EMA update runs *only* when the current reading
+     is below WARN; it freezes the instant a reading looks even mildly
+     elevated, so an ongoing event can't be slowly averaged into "new
+     normal."
+   - **Guard 2** — `BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER` bounds how
+     far the tracked baseline can move per hour even while guard 1
+     permits updates.
+   - **Guard 3** — `MQ*_HARD_CEILING_PLACEHOLDER`: an absolute ceiling,
+     never a function of the tracked baseline, that alarms
+     unconditionally once crossed. This is the actual backstop against
+     the safety tradeoff below — everything else in this design can in
+     principle be defeated by a slow enough hazard; this cannot,
+     by construction.
+   - **Guard 4** — `MQ*_BASELINE_MIN/MAX_PLACEHOLDER` sanity-bound the
+     freshly captured boot baseline itself; a capture outside the
+     plausible clean-air range falls back to a stored
+     `MQ*_FALLBACK_BASELINE_PLACEHOLDER` instead of being trusted,
+     covering both a sensor/wiring fault and boot into an
+     already-contaminated room.
+4. **Safety tradeoff, explicit:** an adaptive baseline is exactly the
+   mechanism that could let a slow-onset hazard (a very gradual
+   smolder, a slow leak) get "learned" as the new normal instead of
+   raising an alarm, since the tracked baseline — and therefore
+   WARN/DANGER, which are computed relative to it — would rise right
+   along with a slowly climbing reading. Guards 1+2 make that drift
+   slow and conditional; guard 3 is the part that makes "fully learned
+   away" impossible regardless of what the tracker does, because it is
+   never computed from the baseline at all. No single guard is
+   sufficient alone: guard 3 alone is just the old fixed-threshold
+   design (reintroducing the boot-to-boot false-alarm/under-alarm
+   problem this redesign exists to fix); guards 1+2 alone (no hard
+   ceiling) reopen the slow-onset blind spot. All three together are
+   the intended design.
+5. **Unchanged, confirmed still correct:** N-of-M voting
+   (`VOTE_WINDOW_M/THRESHOLD_N_PLACEHOLDER`, still Phase 13c's open
+   decision), `readAveraged()`, `ADC_6db` attenuation, the buzzer's
+   local-only WiFi-independent path, and WiFi connect-only (no
+   transport yet, still Phase 13f's open item).
+6. **Stale status line fixed.** `setup()` was still printing
+   "SKELETON, NOT CALIBRATED" from the original skeleton write-up
+   (logs.md "Phase 13d — plain ESP32 DevKit sensor firmware SKELETON
+   written..." 2026-09-16); the header block above it had already
+   moved on to "MEASUREMENT FOUNDATION FIXED, NOT YET CALIBRATED" days
+   ago. Updated the runtime print to match the header's actual status.
+   Also corrected a stray "Phase 13d" in the file's own top comment —
+   this file has been Phase 13b work since the ADC fix; "13d" was a
+   leftover label from the original skeleton commit.
+
+**Tooling updated to match (`tools/calibrate_sensors.py`,
+`arduino/sensor_calibration_capture/sensor_calibration_capture.ino`):**
+the calibration capture sketch's header now describes two capture
+uses (stimulus-test delta, and boot-baseline range) instead of one;
+`calibrate_sensors.py` now prints `CALIBRATED_DELTA` (peak-baseline,
+same run) instead of absolute WARN/DANGER thresholds, and gained a
+`--history <file>` option that appends each run's confirmed baseline
+to a small local JSON record and reports the observed min/max
+clean-air baseline across all recorded runs — the range
+`sensor_esp32_node.ino`'s guard 4 needs. The tool's own docstring now
+recommends running baseline capture across 3+ separate power cycles
+before trusting that range, since the entire point of this redesign is
+that one boot's baseline is not representative of all boots.
+
+**Explicitly NOT done this session, per standing project rule (no
+invented numbers ahead of real data):** every placeholder introduced
+above (`CALIBRATED_DELTA`, `HARD_CEILING`, `BASELINE_MIN/MAX`,
+`FALLBACK_BASELINE`, `DRIFT_CAP_PER_HOUR`) is left at `-1` /
+disabled-comparison, exactly like the constants it replaces. No
+stimulus test or multi-boot baseline capture has been run against this
+redesigned structure yet — that is the next real step, using the
+updated `tools/calibrate_sensors.py` against
+`sensor_calibration_capture.ino`.
+
+---
+
+## Phase 13b calibration — hardware session 1 (2026-09-20 continued): structural smoke test PASSED, multi-boot baseline capture reframed as re-warm convergence, NOT an unexplained drift — see correction below
+
+**Structural smoke test (step 1) — PASSED.** Flashed the redesigned
+`sensor_esp32_node.ino` (per-boot relative baseline) to the plain
+ESP32 DevKit sensor board (`/dev/cu.usbserial-0001`, ESP32 Dev
+Module). Boot sequence ran clean: `WARMUP` for the full 240s gate,
+then `BASELINE_CAPTURE` for the 60s window, then
+`BASELINE_CAPTURE done: mq2=205.00 mq135=47.00`, then normal per-second
+`ok` lines with `baseline_mq2=`/`warn_mq2=`/`danger_mq2=` fields
+updating live. Confirmed the EMA guard (guard 1) visibly ticking the
+baseline up slightly (205.00 -> 205.07 over ~25 samples) while
+readings sat quietly below WARN, as designed. Noted (not a bug): with
+`CALIBRATED_DELTA_PLACEHOLDER` still -1, `warn`/`danger` print
+*below* baseline (`baseline + 0.30*(-1)`) — cosmetically confusing but
+harmless, since `mq2Exceeded`/`mq135Exceeded` are separately gated on
+`CALIBRATED_DELTA_PLACEHOLDER >= 0` and never fire while it's a
+placeholder.
+
+**Multi-boot baseline capture (step 2) — started, 5 boots recorded,
+PAUSED before completion.** Flashed
+`arduino/sensor_calibration_capture/sensor_calibration_capture.ino`
+and ran `tools/calibrate_sensors.py /dev/cu.usbserial-0001 --history
+baseline_history.json` across 5 separate power cycles (full unplug/
+replug between each, not just a soft reset), marking confirmed
+clean-air baseline (`b`) each time once readings settled post-WARMUP.
+One run (kitchen-adjacent room, MQ2 min=298) was correctly abandoned
+without marking (`q` without `b`) when the developer noted the board
+was near the kitchen and the reading was still climbing — not treated
+as a clean-air sample, not written to history.
+
+Recorded boots (`baseline_history.json`):
+
+| Boot | MQ-2 baseline | MQ-135 baseline | Notes |
+|---|---|---|---|
+| 1 | 216 | 26 | |
+| 2 | 157 | 30 | |
+| 3 | 242 | 62 | |
+| 4 | 235 | 92 | different room (further from kitchen) |
+| 5 | 265 | 111 | 15-20 min rest beforehand (longest gap this session) |
+
+**Finding: MQ-135's baseline rose monotonically across all 5 boots
+(26 -> 30 -> 62 -> 92 -> 111), more than quadrupling, with no stimulus
+applied.** MQ-2 was noisier but less directional (216, 157, 242, 235,
+265 — one clear high outlier in the kitchen-adjacent room that was
+correctly excluded, otherwise roughly 157-265).
+
+**Hypothesis test — CLAIMED "ruled out" in this session, CORRECTED
+below (developer challenge, same day):** the original entry here
+claimed a 15-20 min rest before boot 5 "ruled out" short-gap thermal
+carryover, since MQ-135 kept climbing (92 -> 111) despite the longest
+rest of the session. **This conclusion does not hold and is retracted
+as stated.** This project's own prior calibration history
+(`logs.md`, Phase 6 addendum "H4 confirmed, re-warm interrupted",
+2026-08-30) already established that after a full power disconnect,
+the required re-warm window before readings are trusted is **1 hour**
+(sourced from Winsen/PCBSync guidance at the time). A 15-20 minute
+rest is roughly a quarter of that project's own established minimum —
+too short to test the hypothesis it was used to reject. Failing to
+reverse a trend with a sub-threshold intervention is not evidence
+against the mechanism; the test was underpowered, not disconfirming.
+
+**Reframed finding, after a Level 2 research pass (2026-09-20,
+cross-checked against MQ-series datasheets/guides and chemiresistive
+gas-sensor transient-response literature — see sources at the end of
+this entry):** what looked like "an unexplained monotonic drift" is
+more likely the sensor's normal **re-warm convergence curve**, sampled
+at different, not-yet-equilibrated points because the firmware's fixed
+`GAS_WARMUP_SECONDS = 240` gate is far shorter than the time this
+class of sensor actually needs to reach a stable operating point after
+a real power-off. Independent sources converge on the same
+multi-phase picture this project's own 1-hour figure already implied:
+heater thermal equilibrium is fast (~20s-few min), but full reading
+stabilization after a genuine re-power commonly needs on the order of
+20-60 minutes, and gas-sensor resistance during power-on transients is
+documented in the literature as following an **exponential-decay-type
+curve** (fast initial change, decaying slope, flattening near a
+steady-state value) — exactly the shape a "still converging upward"
+explanation predicts, and exactly what a fixed-duration gate cannot
+adapt to.
+
+Read against that: MQ-135's climb (26 -> 30 -> 62 -> 92 -> 111) is
+consistent with sampling successively later points on one underlying
+convergence curve that a 240s+60s gate is nowhere near long enough to
+let finish — not 5 independent "boots" reaching 5 different stable
+values. MQ-2's non-monotonic scatter (216, 157, 242, 235, 265) is
+harder to explain by the same mechanism as cleanly (a genuinely
+converging quantity should not drop 27% then rise again), which
+argues the two sensors may not be behaving identically here — MQ-2
+possibly starting closer to its own equilibrium than MQ-135 was.
+**Not fully confirmed** — this reframing is well-supported by
+external literature and the project's own prior 1-hour figure, but
+was not re-verified against a real long, uninterrupted log from this
+exact board before this entry was written; that confirmation is the
+next concrete step (see below), not yet done.
+
+**Also corrected: the same-session confound was not controlled for.**
+Every boot in this session was simultaneously "one more power cycle"
+AND "later in wall-clock time" — those two variables were never
+separated, so the recorded 5-boot series cannot, by itself, distinguish
+between "re-warm convergence" and "session-length drift" as the
+mechanism. No number of additional discrete power-cycled boots
+resolves this; only a single continuous, non-power-cycled log varying
+elapsed time while holding "number of boots" at one can.
+
+**Design implication:** a fixed wall-clock `GAS_WARMUP_SECONDS`/
+`BASELINE_CAPTURE_SECONDS` gate cannot be correct in general, since the
+starting thermal state at power-on is not controllable in deployment
+(could be a fresh cold boot, could be a boot minutes after a brief
+power blip). The fix implemented same-day: replace the fixed-duration
+gate with a **slope-based stability gate** — hold in warmup/capture
+until the reading's rate of change over a rolling window drops below a
+threshold, with a hard maximum timeout as a backstop so a genuinely
+faulty sensor that never stabilizes doesn't hang the board forever.
+See `sensor_esp32_node.ino` changes below.
+
+**Corrected next step (supersedes the "5 more boots tomorrow" plan
+from the original entry, which the developer correctly flagged as not
+resolving the confound):** run one **continuous, non-power-cycled
+Serial log, 60-90 minutes, sampled every 10-30s**, starting from a
+genuinely cold (long-rested) board, using
+`sensor_calibration_capture.ino`. This holds "number of boots" at
+exactly one while letting elapsed time vary — the direct test the
+5-boot series could not perform. Falsifiable prediction: if this is
+re-warm convergence, MQ-135 should rise with a visibly decaying slope
+and flatten (not necessarily within 60-90 min, but the deceleration
+itself should be visible); if it instead keeps rising near-linearly
+with no sign of decelerating, the re-warm-convergence explanation is
+wrong and the drift needs a different explanation (candidates: genuine
+environmental VOC accumulation — MQ-135 is cross-sensitive to
+alcohol/VOCs, which would also explain why MQ-2, much less
+VOC-sensitive, doesn't show the same monotonic pattern — or an
+electrical/connection issue, same general family as the already-logged
+UNRESOLVED "board-movement causes reading jumps" finding elsewhere in
+this file). This run has NOT been executed yet as of this entry.
+
+**No calibration constant has been filled in.** `baseline_history.json`
+exists as raw recorded data only (5 boots, kept for the record even
+though the confound limits what they alone can prove); none of it has
+been copied into `sensor_esp32_node.ino`'s placeholders. No
+stimulus/peak test (delta derivation) has been run yet, and per the
+above, should not be run until the warmup gate itself is trusted to
+have actually reached a stable reading — a delta computed against a
+still-converging baseline would not be trustworthy.
+
+**Sources consulted (Level 2 web research, 2026-09-20):**
+- [Zbotic — Gas Sensor Guide: MQ2, MQ3, MQ135](https://zbotic.in/gas-sensor-guide-mq2-mq3-mq135-for-air-quality/) — thermal warm-up (~20s) vs. chemical burn-in (24-48h) phase distinction
+- [Tinkered — MQ-2 Gas Sensor Guide](https://www.tinkered.ai/components/mq2-gas-sensor) — routine-use re-power stabilization timing
+- [irisnationalfair.org — Understanding MQ-Series Gas Sensors](https://www.irisnationalfair.org/AwardFormUploads/55251_Upload1_638988034259883407.pdf) — "at least 20 minutes, ideally 30-60 minutes" post-power-on warm-up guidance
+- [circuitdigest — Arduino MQ-2 Gas Sensor Tutorial](https://circuitdigest.com/microcontroller-projects/interfacing-mq2-gas-sensor-with-arduino) and [PCBSync — MQ-135 Guide](https://pcbsync.com/mq-135-air-quality-sensor-arduino/) — 24-48h fresh-sensor burn-in figures, corroborating this project's existing 1-hour post-disconnect re-warm as a shorter, different case
+- [PMC9838722 / ACS Meas. Sci. Au](https://pmc.ncbi.nlm.nih.gov/articles/PMC9838722/) — chemiresistive gas sensor transient response modeled as exponential-decay curves with quantifiable time constants, supporting the "decaying slope, flattening" predicted shape
+- General EWMA/control-chart literature (SixSigma.us, EmergentMind) on smoothing-factor tradeoffs — used only as background context for `BASELINE_EMA_ALPHA`, not directly load-bearing for the warmup-gate fix
+
+---
+
+## Phase 13b — fixed-duration warmup gate replaced with a slope-based stability gate (2026-09-20)
+
+**Implements the design fix identified in the entry directly above.**
+`sensor_esp32_node.ino`'s `GAS_WARMUP_SECONDS = 240` fixed wall-clock
+gate is retired. In its place:
+
+- A rolling-slope estimator per sensor (`WARMUP_SLOPE_WINDOW = 10`
+  samples, ~10s at 1Hz): mean of consecutive absolute differences
+  across the window, computed via a small ring buffer
+  (`mq2SlopeBuffer`/`mq135SlopeBuffer`). Simple average-|delta|, not a
+  true regression slope — cheap enough for a microcontroller loop,
+  sufficient to distinguish "still visibly moving" from "flat."
+- `warmupElapsed()` now returns true once BOTH sensors' rolling slope
+  has stayed at or below `WARMUP_SLOPE_THRESHOLD_PLACEHOLDER` for
+  `WARMUP_STABLE_HOLD_S` (30s) consecutive seconds — the gate re-arms
+  (resets `stableSinceMs`) on any sample that isn't flat, so a brief
+  false-flat blip can't prematurely satisfy the hold.
+- `WARMUP_SLOPE_THRESHOLD_PLACEHOLDER` is left at -1 (disabled) per the
+  project's standing no-invented-numbers rule — it needs a real
+  noise-floor value derived from the continuous-log run planned in the
+  entry above, not a guess. While disabled, `warmupElapsed()` falls
+  back to the hard timeout only (below), so the gate never clears on
+  an untrusted placeholder but also never hangs indefinitely.
+- `WARMUP_MAX_SECONDS = 3600` (1 hour) is a mandatory backstop,
+  independent of the slope condition, sized to match this project's
+  own previously-established 1-hour post-disconnect re-warm figure
+  (Phase 6 addendum, 2026-08-30) rather than an arbitrary number. If a
+  sensor never flattens (fault, or the slope threshold is still a
+  placeholder), warmup clears via this backstop instead of the slope
+  condition, and the firmware now explicitly detects and loudly logs
+  which path fired (`[WARMUP_STABLE] ... after Ns` vs.
+  `[WARMUP_BACKSTOP] ... NOT slope stability`), so an abnormal
+  never-stabilized boot is visible in the Serial log, not silently
+  accepted as if it were a normal clean warmup.
+- Boot status print now explicitly warns when the slope threshold is
+  still a placeholder, since with it disabled the board will currently
+  sit in `WARMUP` for the full 1-hour backstop on every boot, not a
+  quick 240s — expected, but a real behavior change worth surfacing
+  immediately in the Serial Monitor rather than only in code comments.
+
+**Unchanged:** `BASELINE_CAPTURE_SECONDS` (60s) capture window still
+runs immediately after whichever warmup path clears; the median-based
+capture, sanity bounds, EMA tracker, and all three baseline-tracking
+safety guards are untouched by this change — only the definition of
+"warmup has elapsed" moved from a fixed duration to a measured
+condition.
+
+**Still outstanding before this gate is fully trusted:**
+`WARMUP_SLOPE_THRESHOLD_PLACEHOLDER` needs a real value, to be derived
+from the planned continuous, non-power-cycled Serial log (60-90 min,
+sampled every 10-30s) — read the late-run noise floor (the average
+per-sample |delta| once the curve visibly flattens) off that data,
+don't guess it. Until then, every boot will warm up via the 1-hour
+backstop, which is safe (never trusts an unstabilized reading) but
+slow — acceptable for calibration-phase testing, not for a deployed
+device's practical response time, so this remains a real open item,
+not a finished fix.
+
+---
+
+## Phase 13b — warmup gate calibrated from continuous log: MQ2_MQ135_WARMUP_SLOPE_THRESHOLD=12, real data, no longer a placeholder (2026-09-20)
+
+**Continuous log run — clean, PASSED, but SHORTER than planned (~6
+min, not the intended 60-90 min).** After two earlier aborted attempts
+(one touched mid-run, one interrupted early — both discarded, raw
+files deleted, not used), a clean ~6-minute run was captured with
+`sensor_calibration_capture.ino`, no power-cycling, board left
+completely undisturbed throughout. Raw data saved to
+`eval/calibration/warmup_continuous_log_2026-09-20.csv` (358 valid
+parsed rows, ~363s; a handful of trailing bytes were corrupted, likely
+from stopping the capture script mid-write, and were skipped rather
+than guessed at). **Developer confirmed after the fact that this was a
+deliberate/actual 5-6 minute run, not the full 60-90 minutes
+originally planned** — flagged explicitly here rather than letting the
+shorter duration pass as if it were the full planned run.
+
+**What a ~6-minute window can and cannot establish, stated plainly:**
+it fully captures the FAST warm-up phase (the steep initial
+climb/decay and its deceleration into a flat noise floor, complete by
+~90s for both sensors in this run) — that phase is unambiguous in the
+data and is what `MQ2_MQ135_WARMUP_SLOPE_THRESHOLD` below is actually
+derived from and needs to distinguish. It does NOT rule out a slower,
+secondary drift on a tens-of-minutes-or-longer timescale — exactly the
+kind of thing the earlier multi-boot session's MQ-135 climb
+(26->30->62->92->111 across power cycles) hinted at. If such a slower
+drift exists, a 6-minute slope-based warmup gate would correctly
+clear on the fast-phase flattening while a slower creep continued
+underneath it, undetected by this gate specifically. This is not
+unguarded, however: the separate BASELINE TRACKING SAFETY GUARDS
+(EMA freeze-above-WARN, per-hour drift cap, absolute hard ceiling) are
+exactly the mechanism designed to handle drift that happens AFTER
+warmup clears — so a slower secondary drift, if real, is guarded
+against by that separate system, not left exposed. The full 60-90 min
+run remains valuable future work to characterize that slower regime
+directly, but is not blocking the current threshold value, which only
+needed a clean read on the fast-phase noise floor.
+
+**Result: confirms the re-warm-convergence hypothesis, cleanly, for
+this single-cold-boot case.**
+
+| Sensor | Fast warm-up phase | Settling | Noise floor once settled (t>=90s) |
+|---|---|---|---|
+| MQ-2 | 652 -> 175 over ~70s (steep exponential-decay shape) | ~90s | slope stayed under 8.67 (max), 95th pct ~7.3, mean ~4.6 |
+| MQ-135 | 18 -> ~70 over ~15-20s | ~20s | slope stayed under 9.11 (max), 95th pct ~7.2, mean ~3.9 |
+
+Both sensors reached a stable, flat reading well under the old
+240s fixed gate, let alone the 1-hour backstop — this single clean
+run's own data does not, by itself, explain the earlier multi-boot
+session's MQ-135 climb (26->30->62->92->111 across 5 power cycles);
+that mismatch is noted honestly, not swept aside — candidate
+explanations (residual heat from rapid repeated power-cycling in that
+session, vs. a true single-cold-boot curve like this one; or the
+kitchen-proximity/room confound already logged) remain open, but do
+not block progress on the warmup-gate fix itself, which only needs a
+single clean cold-boot's noise floor to calibrate correctly.
+
+**`MQ2_MQ135_WARMUP_SLOPE_THRESHOLD` set to 12`** (was
+`WARMUP_SLOPE_THRESHOLD_PLACEHOLDER = -1`, disabled) in
+`sensor_esp32_node.ino` — computed via the same rolling-slope
+definition the firmware's `rollingSlope()` uses (mean of consecutive
+|delta| over a 10-sample window), read from the settled tail (t>=90s)
+of this real run: max observed noise-floor slope was 8.67-9.11 across
+both sensors, so 12 sits comfortably above real settled noise (won't
+falsely block on quiet-air jitter) while remaining well below the
+18-30+ slopes seen during genuine fast warm-up (still correctly
+detects real convergence-in-progress). This is real measured data, not
+a guess — the placeholder is retired. Renamed
+`WARMUP_SLOPE_THRESHOLD_PLACEHOLDER` -> `MQ2_MQ135_WARMUP_SLOPE_THRESHOLD`
+throughout the file to reflect that it's no longer a placeholder, and
+removed the now-dead "-1 disables the slope gate, falls back to
+WARMUP_MAX_SECONDS only" branch in `warmupElapsed()` since that path
+can no longer be reached.
+
+**Practical effect:** with this value in place, warmup should
+typically clear on the order of ~1-2 minutes for a genuinely cold
+board in the same kind of environment as this test run (not the full
+1-hour backstop) — though this has not yet been re-verified against a
+fresh boot with the new threshold actually compiled in; that
+confirmation (does the `[WARMUP_STABLE] ... after Ns` log line
+actually fire at a sane N, not `[WARMUP_BACKSTOP]`) is the next
+concrete step before trusting this for a live demo.
+
+**Still open, unaffected by this fix:** `MQ2_CALIBRATED_DELTA`,
+`MQ135_CALIBRATED_DELTA`, `HARD_CEILING`, `BASELINE_MIN/MAX`, and
+`FALLBACK_BASELINE` are all still `-1`/placeholder — no stimulus test
+has been run yet. WARN/DANGER remain correctly disabled until the
+delta values are real.
+
+---
+
+## Phase 13b — sensor_calibration_capture.ino's WARMUP/OK tag switched from fixed 240s to the same slope-based gate as production (2026-09-20)
+
+**Live confirmation on real hardware first:** flashed the updated
+`sensor_esp32_node.ino` (`MQ2_MQ135_WARMUP_SLOPE_THRESHOLD=12`), fresh
+cold boot, undisturbed. Gate cleared via
+**`[WARMUP_STABLE] warmup gate cleared via slope stability after 33s`**
+— confirms the calibrated threshold works correctly on real hardware,
+33s vs. the old fixed 240s or the 1-hour backstop. `BASELINE_CAPTURE`
+proceeded normally afterward with consistent readings (MQ2 ~78-93,
+MQ135 ~8-17, no drift visible in the window observed).
+
+**Developer-flagged inconsistency, fixed:**
+`sensor_calibration_capture.ino` had been left on its own separate,
+unchanged fixed `GAS_WARMUP_SECONDS=240` WARMUP/OK tag — correctly
+called out as inconsistent with the whole point of today's redesign.
+The original reasoning ("this sketch computes nothing, the tag is
+purely informational, calibrate_sensors.py just needs a consistent
+format") was true but incomplete: `calibrate_sensors.py` actively uses
+that tag to decide which lines to include in its live min/max
+tracking (WARMUP-tagged lines are skipped), so an overly conservative
+240s cutoff was silently discarding perfectly good, usable data
+between the sensor's real settle point (33-90s, now confirmed live)
+and 240s — slowing down every calibration session for no real reason,
+now that we know the sensor actually settles much faster.
+
+**Fix:** `sensor_calibration_capture.ino` now duplicates the same
+rolling-slope stability gate as `sensor_esp32_node.ino` (same
+`MQ2_MQ135_WARMUP_SLOPE_THRESHOLD=12`, same 10-sample window, same 30s
+stable-hold, same 1-hour backstop), copied inline rather than shared
+via a header — consistent with this sketch's existing pattern of
+duplicating (not importing) the pin map/ADC config it reuses. Its
+WARMUP/OK tag is now a real, live read of sensor stability, not a
+guessed duration, and prints its own `# [WARMUP_STABLE] ... after Ns`
+/ `# [WARMUP_BACKSTOP] ...` lines (comment-prefixed so
+`calibrate_sensors.py`'s `#`-skip logic ignores them safely, same as
+its existing header comment lines). **Maintenance note, stated
+explicitly in the sketch's own header:** if
+`MQ2_MQ135_WARMUP_SLOPE_THRESHOLD` is ever re-derived in
+`sensor_esp32_node.ino` (e.g. from the still-pending full 60-90 min
+continuous log), this sketch's copy needs updating too — they are not
+shared code, so they can silently drift out of sync if only one is
+touched.
+
+---
+
+## Phase 13b calibration — hardware session 2 (2026-09-20/21): multi-boot baseline range captured with the new slope-gate firmware, 5 clean boots, tight and consistent
+
+**Old fixed-gate baseline history retired.** The 5-boot history from
+session 1 (`baseline_history.json`, boots reading 216/157/242/235/265
+for MQ-2) was captured under the old fixed-240s-gate firmware, before
+today's slope-gate fix and before the re-warm-convergence question was
+resolved for that data. Renamed to
+`baseline_history_old_fixed_gate_2026-09-20.json` and excluded from
+this session's range — mixing pre- and post-fix data in one range
+would conflate two different measurement conditions. Fresh
+`baseline_history.json` started for this session.
+
+**Two contaminated/anomalous readings correctly excluded, not averaged
+in:**
+1. A dining-table location showing MQ2~451-468, MQ135~92-110 — an
+   unexplained elevated baseline the developer confirmed was NOT due
+   to an obvious gas source (no stove nearby). A gas-stove stimulus
+   test was then run from this already-elevated, unexplained baseline
+   (MQ2 rose further to ~600) — this stimulus result is NOT trusted as
+   a real `CALIBRATED_DELTA` measurement, since it's confounded by an
+   unexplained starting condition; discarded, not used.
+2. A later boot at the (now-established-clean) primary location
+   showing a sudden jump to MQ2~266-320, MQ135~150-213, sharply
+   inconsistent with the 4 surrounding clean boots (93-107 / 6-27) at
+   the same spot. Correctly never marked (`b` not pressed) and so
+   never entered into `baseline_history.json`. Cause not identified
+   (candidates: transient contamination, brief handling/movement, or
+   the already-logged UNRESOLVED board-movement/connection issue) —
+   left as an open, unexplained single-boot anomaly, not investigated
+   further this session since it didn't block progress (the excluded
+   reading simply wasn't used).
+
+**5 clean, consistent boots recorded** at a single stable location
+(developer relocated away from the dining table after the anomaly was
+noticed):
+
+| Boot | MQ-2 baseline | MQ-135 baseline |
+|---|---|---|
+| 1 | 94 | 6 |
+| 2 | 93 | 7 |
+| 3 | 103 | 7 |
+| 4 | 101 | 18 |
+| 5 | 107 | 27 |
+
+**Observed range: MQ-2 `[93, 107]` (14-count spread), MQ-135 `[6, 27]`
+(21-count spread).** Substantially tighter and more consistent than
+session 1's chaotic 5-boot spread (MQ-2 157-265, MQ-135 26-111,
+partly under investigation as re-warm-convergence, partly still
+unexplained) — this location appears to be a materially more stable
+testing environment. MQ-135 shows a mild upward trend across these 5
+boots (6->7->7->18->27) worth noting but not alarming given the small
+absolute scale (single-digit-to-20s range) and that it does not
+remotely approach the earlier session's runaway climb (up to 111);
+not investigated further, flagged for awareness only.
+
+**Constants set from this range** (`sensor_esp32_node.ino`):
+- `MQ2_BASELINE_MIN_PLACEHOLDER` -> 93, `MQ2_BASELINE_MAX_PLACEHOLDER` -> 107
+- `MQ135_BASELINE_MIN_PLACEHOLDER` -> 6, `MQ135_BASELINE_MAX_PLACEHOLDER` -> 27
+- Fallback baselines set to the median of the 5 recorded boots:
+  MQ2 -> 101, MQ135 -> 7 (see code comment for exact values chosen)
+
+**Developer question addressed this session (not a code change, a
+design clarification):** how the per-boot relative baseline behaves
+if actual deployment/demo conditions differ substantially from
+calibration conditions (e.g. a demo room with a much higher ambient
+baseline than this session's ~93-107). Clarified: WARN/DANGER are
+always computed relative to THAT boot's own captured baseline, so a
+high-but-stable room baseline does not itself trigger an alert — only
+a genuine rise of roughly the calibrated delta magnitude above
+whatever that session's baseline is does. The unresolved risk flagged
+honestly: `CALIBRATED_DELTA` itself is calibrated at one location's
+baseline level and is not verified to transfer linearly to a very
+different baseline level (sensor response linearity across a wide
+range not confirmed) — the absolute hard ceiling (guard 3) remains the
+mitigation for this specific uncertainty, independent of baseline or
+delta.
+
+**Still outstanding:** `MQ2_CALIBRATED_DELTA`/`MQ135_CALIBRATED_DELTA`
+(real stimulus test, not yet done cleanly — the one stimulus test run
+this session was at the contaminated dining-table location and is
+discarded, not used) and `MQ2/MQ135_HARD_CEILING` (judgment call,
+still pending real delta data to set sensibly above).
+
+---
+
+## Phase 13b calibration — 6th boot + AC/windows-closed confound identified, sanity bounds updated (2026-09-20/21)
+
+**A 6th boot was attempted at the developer's request** (safety check
+on whether MQ-135's mild upward trend across boots 1-5 was real).
+Before it could be captured cleanly, the room's windows were closed
+and AC turned on mid-session — producing a large, repeatable spike at
+the SAME physical location (MQ2 361-379, MQ135 263-292) on the very
+next boot attempt. **This is a real, identified environmental
+confound, not noise or a fault**: closing windows + AC on both
+plausibly and directly affect an MQ sensor (reduced fresh-air
+exchange, AC-introduced VOCs/dust/refrigerant traces, altered
+airflow). Correctly NOT marked as baseline, NOT entered into
+`baseline_history.json` — this is valuable evidence that this
+location's "clean air baseline" is itself conditional on HVAC state,
+kept as a documented finding rather than discarded and forgotten.
+
+**Conditions were reverted (windows reopened, AC off) and boot 6 was
+re-attempted successfully**: MQ2=64, MQ135=5 — legitimately the lowest
+of the 6 boots, but a believable clean-air reading (unlike the
+excluded AC spike, which was 150-300+ counts away). Accepted into the
+range as real additional spread, not excluded.
+
+**Updated 6-boot table:**
+
+| Boot | MQ-2 | MQ-135 |
+|---|---|---|
+| 1 | 94 | 6 |
+| 2 | 93 | 7 |
+| 3 | 103 | 7 |
+| 4 | 101 | 18 |
+| 5 | 107 | 27 |
+| 6 | 64 | 5 |
+
+**New observed range: MQ-2 `[64,107]` (widened from `[93,107]`),
+MQ-135 `[5,27]` (widened from `[6,27]`).** `sensor_esp32_node.ino`'s
+sanity bounds updated to match, same +/-15 margin convention:
+`MQ2_BASELINE_MIN/MAX` -> 49/122 (was 78/122), `MQ135_BASELINE_MIN/MAX`
+-> 0/42 (unchanged, already floored at 0). Fallback baselines updated
+to the median of all 6 boots: MQ2 -> 98 (was 101), MQ135 -> 7
+(unchanged).
+
+**Explicitly flagged as an open item, not resolved this session:**
+this entire calibrated range reflects ONE environmental condition
+(windows open, AC off) at ONE location. The excluded AC-on/
+windows-closed reading shows this location has at least one other
+legitimate "clean air, different HVAC state" baseline that is NOT
+covered by the current sanity-bound range. If the actual demo/
+deployment environment runs with AC on or windows closed, guard 4
+could incorrectly reject a real clean boot under that condition and
+fall back to the stored default instead of trusting it. Not fixed
+this session — would require either boots captured under both HVAC
+states (widening the range further, at some cost to how tightly guard
+4 can still catch a genuine anomaly) or a developer decision on which
+HVAC state the demo will actually use. Recommend deciding this before
+the actual demo, not guessing.
+
+---
+
+## Phase 13b — baseline anomalies DIAGNOSED as normal sensor behaviour (not wiring, not fault); guard 4 redesigned from "substitute" to "trouble state" (2026-09-21)
+
+**Question investigated:** are the two anomalous baselines recorded
+during calibration (dining table MQ2 451-468 / MQ135 92-110; AC-on
+MQ2 361-379 / MQ135 263-292) caused by a sensor fault, by the known
+unresolved loose-wiring/movement issue, or by genuine sensor response
+to different air?
+
+**Answer: genuine sensor behaviour. Sensors and wiring are working
+correctly.** Two independent diagnostics, both computed from the
+recorded numbers:
+
+1. **Channel-divergence test.** A shared electrical fault (supply sag,
+   bad ground, drifting divider resistor) would shift both ADC
+   channels by a similar *ratio*, since MQ-2 and MQ-135 share supply
+   and divider topology. Measured, relative to the 6-boot clean
+   midpoints (MQ2 85.5, MQ135 16.0):
+   - Dining table: MQ-2 5.4x, MQ-135 6.3x -> ratio-of-ratios **1.17**
+   - AC-on: MQ-2 4.3x, MQ-135 17.3x -> ratio-of-ratios **4.01**
+   A 4x divergence between channels on one occasion and near-parity on
+   another cannot be produced by a shared electrical fault. It follows
+   directly from the two sensors' different gas selectivity — MQ-135
+   is far more VOC/NH3/CO2-sensitive than MQ-2, so an AC unit's VOC
+   load hits MQ-135 roughly 4x harder. Different gas mixture, not
+   different electronics.
+
+2. **Within-run stability test.** Friction-fit resistors and marginal
+   Dupont contacts produce *erratic* readings — the already-logged
+   movement-jump issue shows ~100-count excursions on a ~100 baseline
+   (~100%). The anomalies were the **opposite**: within-run spread was
+   3.7-4.9% (MQ-2) and 10.5-17.8% (MQ-135), i.e. **5-10x tighter than
+   normal clean boots** (22.6% / 122.6%). A connection fault cannot
+   make readings *more* stable. Elevated-but-rock-steady is the
+   signature of a real, sustained gas concentration.
+
+3. Supporting: the AC-on anomaly had a directly observed physical
+   cause (windows closed + AC switched on) and reversed when
+   conditions were reverted — a controlled result, not speculation.
+
+**The known movement/loose-wiring issue remains real but is SEPARATE
+and was not the cause here.** Its signature (high-variance jitter under
+physical disturbance) is distinguishable from these anomalies
+(low-variance elevated plateau). Do not conflate them; the wiring is
+adequate for steady-state operation and fragile only under handling.
+
+---
+
+**Consequent fix: guard 4 redesigned. This is a safety-relevant
+behaviour change, not a tuning tweak.**
+
+**The bug found:** guard 4 previously rejected an out-of-range boot
+baseline and substituted a stored default (MQ2=98, MQ135=7), then
+continued silently. Given the diagnosis above — that this hardware
+demonstrably produces legitimate clean-air baselines of ~300-460 in
+other rooms/HVAC states — that substitution is actively dangerous:
+
+> If a room's true clean-air baseline is ~300 and guard 4 substitutes
+> 98, then WARN = 98 + 0.30*delta while every real reading sits near
+> 300. Every sample reads above WARN, N-of-M voting latches within
+> seconds of capture completing, and the buzzer never releases. The
+> safety guard would itself be the failure mode — a **guaranteed**
+> stuck alarm, not a conditional risk.
+
+**New behaviour** (modelled on commercial fire-detector practice, see
+research sources below): when the captured baseline falls outside the
+plausible range, the firmware now **trusts the measurement** — keeping
+WARN/DANGER correctly scaled to the room actually present — and raises
+a persistent, audible **trouble state** instead of substituting.
+Implemented in `sensor_esp32_node.ino`:
+- `baselineTroubleActive` latches at capture time if either sensor's
+  median was out of range; Serial prints `[BASELINE_TROUBLE] ... USING
+  IT ANYWAY (not substituting)` with both values and both expected
+  ranges.
+- `emitTroubleChirp()` sounds `TROUBLE_BEEP_COUNT`=2 short 80ms chirps
+  once per `TROUBLE_BEEP_PERIOD_MS`=10s — deliberately distinct from
+  the solid-on gas alarm, meaning "verify the environment," not
+  "evacuate."
+- **Precedence is explicit and must not be reordered:** a real gas
+  alarm always wins. The trouble chirp only runs in the `else` branch
+  when `gasHigh` is false, so it can never mask, interrupt, or be
+  mistaken for an actual gas alarm.
+- The now-unused `MQ2/MQ135_FALLBACK_BASELINE_PLACEHOLDER` constants
+  were deleted rather than left as dead code.
+- The bounds themselves are now a **notification** threshold, not a
+  rejection threshold — being outside them degrades nothing. Guard 3
+  (absolute hard ceiling, independent of baseline) remains the real
+  backstop against booting into genuinely hazardous air.
+
+**Blocking-delay note:** `emitTroubleChirp()` uses short blocking
+`delay()`s totalling 320ms at current constants. Safe here — it fires
+at most once per 10s against a 1000ms sample budget of which
+`readAveraged()` uses ~32ms — but the sketch comment warns to re-check
+that sum against `SAMPLE_INTERVAL_MS` if the chirp constants are
+raised.
+
+**Research basis (Level 2 deep dive, 2026-09-21):** commercial
+addressable smoke detectors track a long-term clean-air reference and
+compute alarm thresholds as an offset above it (matching this
+project's per-boot baseline design), but when the reference reaches
+its compensation limit they raise a **trouble/maintenance signal**
+rather than silently substituting or disabling detection — because
+further compensation would mean the detector can no longer resolve a
+real fire. EN 54 correspondingly requires drift compensation be
+bounded and not significantly reduce sensitivity to slowly developing
+fires. Sources:
+- [Honeywell/System Sensor — Reducing Detector-based Nuisance Alarms](https://buildings.honeywell.com/content/dam/hbtbt/en/documents/document-lists/system-sensor/white-papers/SmokeDetectors-ReducingNuisanceAlarms%20WhitePaper%20A05-0340.pdf)
+- [QuickShip Fire — Smoke Detector Sensitivity & Drift Compensation Guide](https://www.quickshipfire.com/understanding-addressable-smoke-detector-sensitivity-settings-and-drift-compensation/)
+- [Thorn Security — Fire detector drift compensation (WO2016178006A1)](https://patents.google.com/patent/WO2016178006A1/en)
+- [IFSEC Insider — Testing detectors with drift compensation on slowly developing fires / high background](https://www.ifsecglobal.com/global/practical-method-testing-smoke-detectors-drift-compensation-slowly-developing-fires-high-background-levels/)
+- [EN 54-20 (iTeh preview) — bounded compensation, 1.6x response-threshold limit for aspirating detectors](https://cdn.standards.iteh.ai/samples/1837/74690f020d46404187716acc49a6e6ac/SIST-EN-54-20-2006.pdf)
+- [VisiblAir — CO2 sensor auto-calibration benefits and risks](https://visiblair.com/articles/co2-sensor-auto-calibration/) and [ScienceInsights — gas detector startup/fresh-air zero](https://scienceinsights.org/how-to-use-a-gas-detector-startup-to-calibration/) (contaminated-zero corrupts all later readings)
+
+**Not changed, deliberately:** the EN 54 1.6x compensation-limit
+figure is specified for aspirating smoke detectors and was NOT copied
+as a numeric constant here — it informed the *principle* (bound the
+compensation, signal loudly at the bound) but transferring the
+specific ratio to MQ-class gas sensors would be unjustified.
+
+---
+
+## Phase 13b — warmup gate: real flaw found by replaying recorded cold-start data, net-drift check added (2026-09-21)
+
+**Question investigated:** developer reported that unplugging the MQ
+sensors for a long period makes readings start at 400-500+ on
+reconnect. Does the slope-based warmup gate handle this correctly?
+
+**Answer: mostly, but a real, fixable flaw was found by replaying the
+existing cold-start log (`eval/calibration/warmup_continuous_log_2026-09-20.csv`,
+which genuinely begins at MQ-2=652 after a long rest — this WAS
+already a cold-start case, just not previously analysed for this
+question).**
+
+Simulating `warmupElapsed()`'s exact logic (jitter threshold 12, 30s
+hold) against that recorded log: the gate correctly refuses to clear
+during the steep early decay (jitter 25-30 at t=10-20s), but clears at
+**t=55s with the reading at 176** — while the sensor's true settled
+value (mean, t>=150s) was **158**. That's an **11% high** captured
+baseline, mid-decay, not after settling.
+
+**Root cause: the jitter check is sign-blind.** It averages the
+*magnitude* of consecutive changes, discarding direction. By t=25s the
+decay had flattened enough for jitter to read 11.9 (under the
+threshold of 12) even though the reading was still steadily falling
+from 263 toward 158 — a slow steady decline and quiet noise look
+identical to a check that only measures step size, not net movement.
+
+**Fix: added a second, complementary check — net drift** (`|newest -
+oldest|` across the same rolling window), which a steady one-way
+decline accumulates but noise cancels out. Both `sensor_esp32_node.ino`
+and `sensor_calibration_capture.ino` now require BOTH jitter AND net
+drift to pass, on both sensors, for the full hold period, before
+warmup clears.
+
+**Threshold and hold derivation (swept against the same recorded
+log, not guessed):**
+- Net-drift threshold candidates 8/10/12 never cleared in the log at
+  all — too tight, would push every boot to the 1-hour backstop.
+- The settled tail's OWN net drift (t>=150s) reaches 18 (MQ-2) / 15
+  (MQ-135) from noise alone — any threshold at or below that risks a
+  genuinely stable sensor never qualifying. This set a hard floor.
+- 22 is the smallest value tested comfortably clear of that 18 noise
+  ceiling.
+- Hold time was swept at drift<=22: 30s hold -> clears t=80s (+12.0%
+  error vs. true settled value, barely better than before this fix);
+  45-90s -> t=95-140s (+5.7 to +6.3%); 120s -> t=170s (-1.3%, best
+  accuracy but slowest). **60s chosen** as the point where most of the
+  accuracy gain (+5.7% vs the original +11%) is captured without
+  pushing total warmup much past ~110s, since this gate runs before
+  every demo/use and startup time matters. `WARMUP_STABLE_HOLD_S`
+  raised 30s -> 60s accordingly.
+
+**Result on the same recorded cold start:** gate now clears at t=110s
+with MQ-2=167 vs. true settled 158 (+5.7% error), down from t=55s at
+176 (+11% error) under the old jitter-only check.
+
+**Explicitly not resolved:** this was validated against ONE recorded
+cold-start run, not re-tested live on hardware after the code change,
+and not tested against a genuinely faulty sensor that never
+stabilises (that path still falls through to the existing
+`WARMUP_MAX_SECONDS`=3600s backstop, unchanged). A live re-run to
+confirm the `[WARMUP_STABLE] ... after Ns` line actually fires at
+~110s on real hardware is the natural next verification step, not yet
+done.
+
+---
+
+## Phase 13b — trouble state auto-clear added (2026-09-21)
+
+**Finding from the full hardware/firmware scan (same session):** the
+guard-4 trouble state (`baselineTroubleActive`) was a one-way latch —
+set at baseline capture time if the boot baseline fell outside the
+plausible range, but nothing in the code ever cleared it. A single
+transient anomaly during the 60s capture window (e.g. AC briefly on)
+would chirp for the entire remaining session, even after conditions
+returned fully to normal — undermining the redesign's own intent
+("notify, don't degrade") by turning the notification into
+unsilenceable noise for a full demo/session.
+
+**Fix:** added `TROUBLE_CLEAR_STREAK`=30 consecutive in-range samples
+(~30s at 1Hz) as an auto-clear condition, checked every sample once
+trouble is active (zero cost otherwise). Compares the TRACKED baseline
+(EMA-smoothed) against the same `MQ*_BASELINE_MIN/MAX_PLACEHOLDER`
+bounds used at capture — deliberately the tracked value, not a single
+raw sample, since that's the correct like-for-like comparison against
+what was originally flagged (also a smoothed quantity, the 60-sample
+median). Any single out-of-range sample resets the clear streak to 0,
+so a reading has to be genuinely, sustainedly back in range, not just
+briefly dip in and out. Clears with a printed
+`[BASELINE_TROUBLE_CLEARED]` line.
+
+**Other scan findings, not fixed (documented, judged non-blocking for
+the demo):**
+- ESP32 ADC1 is documented to still pick up WiFi-PA switching noise
+  even though ADC1 (unlike ADC2) avoids the gross WiFi-active failure
+  mode. Standard mitigation (100nF bypass capacitor on each ADC input)
+  is not present on this board. Plausible additional contributor to
+  measurement jitter, not confirmed as an actual issue on this
+  hardware — flagged for awareness, not investigated further.
+- `applyBaselineDriftCap()`'s hourly re-anchor can, in principle, run
+  one sample after an EMA update in the same iteration rather than
+  strictly before — negligible at `BASELINE_EMA_ALPHA`=0.001, not
+  fixed.
+- `emitTroubleChirp()`'s blocking delay (320ms) means
+  `analogRead()`/`readAveraged()` don't run for up to 320ms once per
+  10s while in trouble state — a small, bounded, but real reduction in
+  responsiveness to a fast-onset event during exactly the state where
+  attentiveness matters most. Not changed; flagged as a conscious
+  tradeoff to be aware of.
+- WiFi password is plaintext in the `.ino` source. Standard practice
+  would avoid committing real credentials; treated as low-stakes for
+  a local class demo, not changed.
+
+---
+
+## Phase 13b — warmup gate was NOT latched; a stimulus dragged the board back into WARMUP (2026-09-21)
+
+**Symptom as reported:** during the gas-stove stimulus test,
+`tools/calibrate_sensors.py`'s live display "froze" the moment the gas
+came on. Reproduced three times. The port stayed enumerated, `b` had
+worked moments earlier, and `q` still quit cleanly — so the Python
+process was alive and its stdin thread responsive throughout.
+
+**Several wrong diagnoses were proposed and discarded along the way**,
+recorded here because each was falsified by a specific observation
+rather than by opinion:
+- *Brownout / EMI from the burner's piezo igniter* — falsified: the
+  board never reset; no header reprint, no warmup restart.
+- *Loose friction-fit Dupont jumper disturbed by reaching toward the
+  stove* — falsified: the Arduino IDE Serial Monitor, opened right
+  after the Python terminal was closed, showed an unbroken 1Hz stream.
+- *Two processes contending for `/dev/cu.usbserial-0001`* — falsified:
+  the IDE monitor was opened only **after** the Python script was
+  closed, never concurrently.
+- *Terminal rendering collision between the `\r`-rewritten status line
+  and echoed keystrokes* — falsified by replaying the display logic
+  against the real numbers; line width stays 57-62 chars and rewrites
+  cleanly.
+
+**Actual root cause,** confirmed from the IDE Serial Monitor capture:
+every line during gas exposure was tagged `WARMUP` (`164000,357,125,
+WARMUP` … `170000,387,148,WARMUP`, MQ2 357→392 and climbing).
+`warmupElapsed()` in BOTH sketches was a **live re-evaluated
+condition, not a latch**. Rising gas readings blow through the jitter
+(≤12) and net-drift (≤22) checks, so the gate reverts to `false` and
+`stableSinceMs` resets. `calibrate_sensors.py` then discards every
+`WARMUP` line silently (no print, no min/max update) — so the display
+stopped updating at exactly the moment of interest. Causal, not
+coincidental, which is why it reproduced every single time.
+
+**Fix 1 — `sensor_esp32_node.ino` (SAFETY-CRITICAL).** `warmupElapsed()`
+now returns `true` immediately if `bootWarmupCleared` is set, making
+warmup a one-way per-boot transition. Previously a genuine fire's
+rising gas would have pushed the production detector back into warmup,
+**suppressing alarming at precisely the moment the alarm was needed.**
+This was a latent alarm-suppression bug reachable by the exact event
+the device exists to detect; it was never observed in production only
+because no stimulus had yet been applied to the production firmware
+with the slope gate in place. `bootWarmupCleared`'s declaration comment
+(line 198), which claimed the flag was "used only to detect and log",
+was updated — it is now load-bearing.
+
+**Fix 2 — `sensor_calibration_capture.ino`.** Same latch, same
+reasoning, keeping the duplicated gate in sync per that file's
+standing "copied not imported" convention.
+
+**Fix 3 — `tools/calibrate_sensors.py`.** `WARMUP` lines are still
+excluded from min/max (they must not pollute baseline or peak), but
+are now *displayed* as `[warming up] ... (not counted)`. A silently
+skipped line was visually indistinguishable from a dead serial port,
+and that ambiguity is what sent the diagnosis down four wrong paths
+and cost three aborted stove tests.
+
+**Note on the physical setup:** the wiring-robustness advice given
+during the wrong-diagnosis phase (anchor the breadboard, leave USB
+slack, reseat GPIO34/35 and power jumpers) was never validated as
+necessary — it addressed a fault mode that turned out not to be
+occurring. It remains reasonable practice for a demo, but it is not a
+fix for anything observed here.
+
+**Still outstanding:** `MQ2/MQ135_CALIBRATED_DELTA_PLACEHOLDER` remain
+`-1`. No delta has been captured yet — all three stove attempts
+aborted before a peak could be marked. The test must now be re-run
+against the reflashed sketch.
+
+---
+
+## Phase 13b — MQ2/MQ135_CALIBRATED_DELTA set from real gas-stove stimulus (2026-09-21)
+
+**Two independent stimulus runs**, both post-latch-fix (warmup gate holds
+through a live stimulus, see prior entry), both post-reseat (electrical
+fault from the correlated-channel run resolved by reseating GND/VCC/
+GPIO34/GPIO35):
+
+| Run | Baseline MQ2/MQ135 | Peak MQ2/MQ135 | Delta MQ2/MQ135 | Ratio-of-ratios |
+|---|---|---|---|---|
+| 1 | 157 / 25 | 735 / 351 | 578 / 326 | 3.00 |
+| 2 | 123 / 29 | 737 / 319 | 614 / 290 | 1.84 |
+
+Both ratios far from 1.0 (the correlated-fault run measured 0.9952
+channel correlation, ratio ~1.0) -- confirms both runs are real
+selective gas response, not the electrical fault seen earlier that
+session. Deltas agree within 6% (MQ2) and 12% (MQ135) across two
+independent runs at two different starting baselines -- treated as
+reproducible.
+
+**Written to firmware:** `MQ2_CALIBRATED_DELTA_PLACEHOLDER = 596`,
+`MQ135_CALIBRATED_DELTA_PLACEHOLDER = 308` (simple average of the two
+runs).
+
+**Caveats, stated plainly:**
+- Both runs used gas-stove exposure only. MQ135's value is cross-talk
+  from stove gas, not a targeted MQ135-selective stimulus (e.g.
+  ammonia/alcohol vapor) -- it is directionally real but likely not
+  MQ135's most sensitive-axis response.
+- Both runs' baselines (157, 123) were still somewhat elevated versus
+  the clean 6-boot range (64-107), because the sensor was mid-recovery
+  from an earlier saturating exposure when each run started. This
+  makes both deltas conservative (understated) rather than inflated --
+  the true delta from a fully-settled ~90 baseline against the same
+  ~735 ceiling would be larger. Errs safe (earlier WARN/DANGER), not
+  unsafe.
+- MQ2 peaked at 735 and 737 in the two runs -- consistent enough to
+  suspect a real ceiling (saturation or ADC/divider max at this
+  exposure level), but this was not a dedicated ceiling-finding test,
+  so `MQ2_HARD_CEILING_PLACEHOLDER` / `MQ135_HARD_CEILING_PLACEHOLDER`
+  are deliberately left at -1, not set from this coincidence.
+
+**Still outstanding:** hard ceilings (still -1, need a dedicated
+test/decision), `BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER` (-1),
+`VOTE_WINDOW_M_PLACEHOLDER`/`VOTE_THRESHOLD_N_PLACEHOLDER` (defaulted
+5/3, not derived), buzzer wire still physically disconnected per the
+sketch's own header note.
+
+---
+
+## Phase 13b — buzzer reconnected; MQ2/MQ135_CALIBRATED_DELTA revised from 3 fresh low-baseline runs; DANGER multiplier changed 0.60->0.50 (2026-09-23)
+
+**Buzzer reconnected.** The GPIO33 wire noted as physically disconnected
+in `sensor_esp32_node.ino`'s header (to stop repeated beeping during
+burn-in) was reconnected this session. Verified with
+`arduino/buzzer_test/buzzer_test.ino` (5x 1s on/off) — audible, correct
+GPIO33 pattern, "buzzer test complete" printed. Production sketch
+reflashed afterward. Note: `sensor_calibration_capture.ino` has no
+buzzer code at all (data-capture-only by design), so the buzzer's
+physical connection state was never actually a variable in any
+calibration run, past or present -- an earlier working theory this
+session that a *connected* buzzer's current draw explained some
+spurious high readings was wrong for this reason and is retracted; see
+below for what the spurious readings actually were.
+
+**Four calibration-tool runs attempted; two were serial-corruption
+duds, unrelated to gas response.** Two runs
+(`eval/calibration/ceiling_test_20260923_010126.log`,
+`..._010532.log`) show long runs of NUL-byte garbage
+(`[SKIP] malformed line: '\x00\x00...'`) and, in one case, a hard
+`serial.SerialException: read failed: [Errno 6] Device not
+configured` port disconnect. One of the two malformed lines happened
+to decode a legible substring resembling "Brownout detector was
+triggered" during initial review, but on closer reading both runs are
+serial-link corruption/disconnect events (garbled bytes, a mid-session
+reboot visible as `millis=2000,...,WARMUP` in the corrupted stream's
+tail), not a captured, reliable brownout event tied to a real gas
+stimulus -- this was over-interpreted in-session as strong evidence of
+an electrical/brownout artifact contaminating the gas readings, which
+on full review of the raw log files it does not actually establish.
+Root cause of the serial corruption itself is NOT investigated this
+session -- flagged as a real, separate, previously undocumented
+finding (this board's USB-serial link is not fully reliable across all
+sessions), distinct from the calibration question. A third run
+(`..._010559.log`) was clean but quit during warmup before any
+stimulus -- no data either way.
+
+**Three clean, complete runs obtained, all from a similar low
+(unelevated) baseline, all logged via
+`python tools/calibrate_sensors.py <port> | tee eval/calibration/<name>.log`:**
+
+| Log file | Baseline MQ2/MQ135 | Peak MQ2/MQ135 | Delta MQ2/MQ135 |
+|---|---|---|---|
+| `ceiling_test_20260923_010621.log` | 88 / 8 | 1177 / 493 | 1089 / 485 |
+| `delta_test_2_20260923_011624.log` | 84 / 9 | 1251 / 575 | 1167 / 566 |
+| `delta_test_3_20260923_012345.log` | 81 / 10 | 1189 / 675 | 1108 / 665 |
+
+All three show a smooth, multi-sample gradual ramp to peak followed by
+a smooth decay (consistent with real SnO2 sensor chemistry, which
+responds over seconds, not within a single 1Hz sample) and no
+malformed-line/serial-corruption markers in their respective log
+files -- treated as reliable data. (`delta_test_3` did have a
+NUL-byte corruption burst at its very start, before the real capture
+began and before warmup cleared; the capture itself, once underway,
+is clean.)
+
+**MQ2: tightly reproducible, mean taken.** Three deltas (1089, 1167,
+1108) agree within ~7% of each other, all from near-identical
+low/settled baselines (81-88) -- a real, reproducible measurement.
+`MQ2_CALIBRATED_DELTA_PLACEHOLDER` updated from 596 to **1121** (mean
+of the three). The prior 596 (mean of two earlier runs, baseline
+123/157) is superseded, not contradicted -- per that entry's own
+caveat, a higher starting baseline against the same real stimulus
+understates the delta, which is exactly the direction the new,
+lower-baseline runs moved.
+
+**MQ135: real upward trend across the three runs, not random
+scatter -- flagged, not resolved.** Deltas 485 -> 566 -> 665 rose
+monotonically across three runs taken back-to-back (~15 min apart
+total), which is the signature of drift/incomplete recovery between
+exposures rather than noise around a stable value (a true noise
+pattern would not be monotonic). Suspected cause, NOT confirmed: MQ135
+may not have fully returned to its true baseline surface state between
+runs even though its *reported* baseline reading looked settled each
+time. `MQ135_CALIBRATED_DELTA_PLACEHOLDER` updated from 308 to **572**
+(mean of the three, used as the working value per developer decision
+to keep both sensors on the same combination method) -- but this
+number is explicitly NOT treated as settled. **Open item: a 4th MQ135
+run after a genuine long cool-down (30+ min, not back-to-back) would
+distinguish "still climbing" (real drift, needs longer recovery before
+future calibration) from "was settling toward a stable value"
+(665 or higher is the real number).** Not decided this session.
+
+**Statistical method (researched, Level 2 deep dive):** for n=3,
+literature on small-sample estimation favors simple mean over median
+(median needs much larger n, ~25+, to be reliable) and flags
+mean-vs-median divergence over 5-10% as a signal to inspect individual
+points rather than trust either blindly. MQ2's three values show no
+such divergence (mean ~ median). MQ135's do not diverge much either by
+that specific test, but the deeper issue there is the monotonic trend
+itself, which no single-number summary (mean, median, or otherwise)
+resolves -- documented above rather than statistically averaged away.
+
+**DANGER multiplier changed 0.30/0.60 -> 0.30/0.50 (deliberate,
+developer decision, both sensors).** Researched against industry LEL
+gas-detector convention: standard practice sets a low/warning alarm at
+~20-25% of a reference span and a high/danger alarm at ~50-60%, with
+60% sitting at the conservative end of that range specifically to
+leave response-time margin before a truly hazardous concentration is
+reached. Moving from 0.60 to 0.50 makes DANGER fire EARLIER (smaller
+required rise above baseline: -112 raw counts for MQ2, -57 for MQ135
+at typical baselines) -- i.e. MORE sensitive, not more conservative.
+**Developer's explicit goal: detect a real fire sooner, accepting more
+false-alarm risk as the tradeoff** -- a legitimate, named choice within
+the industry-cited 50-60% band, not an error, but it moves in the same
+direction (more sensitive / more false-alarm-prone) as two other
+currently-open risks on this board: the hard ceiling guard is still
+unset (`MQ2/MQ135_HARD_CEILING_PLACEHOLDER = -1`, so there is currently
+no independent backstop that fires regardless of the tracked baseline)
+and MQ135's delta is itself still trending upward per the finding
+above. **Recommend re-reviewing the 0.50 choice once the hard ceiling
+is set and MQ135's delta is confirmed settled** -- flagged, not
+blocking, since the developer has explicitly weighed and accepted this
+tradeoff now.
+
+**Written to firmware (`sensor_esp32_node.ino`):**
+`MQ2_CALIBRATED_DELTA_PLACEHOLDER = 1121`,
+`MQ135_CALIBRATED_DELTA_PLACEHOLDER = 572`, DANGER multiplier `0.60`
+-> `0.50` for both sensors (WARN multiplier `0.30` unchanged).
+`sensor_calibration_capture.ino` has no threshold formula to update
+(data-capture-only). Not yet re-flashed to hardware or live-tested
+against the new values as of this log entry.
+
+**Still outstanding after this session:** hard ceilings are set FINAL
+(1400/750, see below) -- a dedicated sustained-plateau saturation test
+was considered and deliberately NOT scheduled (developer decision,
+time constraints); this is a disclosed limitation for the final
+report, not an open task. `BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER`
+still -1, a 1-hour undisturbed capture is planned for tomorrow to
+derive it properly (a 2.5-minute extrapolation from existing burn-in
+data was considered and rejected as unreliable -- methods disagreed by
+5-8x); new firmware values (delta, DANGER multiplier, hard ceilings)
+not yet live-tested with a real stimulus. `VOTE_WINDOW_M`/
+`VOTE_THRESHOLD_N` (5/3) reviewed and confirmed adequate by analysis
+this session -- no longer an open item, see below.
+
+**MQ135 delta trend (485/566/665) — accepted for prototype, not
+pursued further (developer decision, 2026-09-23).** The monotonic-rise
+finding above stands as a documented, disclosed limitation, but the
+developer has decided 572 (the mean already written to firmware) is
+adequate for the prototype's purposes; a longer-cooldown 4th
+confirmation run is not being scheduled. Not re-opened unless new
+evidence surfaces.
+
+**VOTE_WINDOW_M/VOTE_THRESHOLD_N (5/3 defaults) — CONFIRMED adequate
+by analysis, not changed (2026-09-23).** Checked against two real data
+sources rather than left as an unreviewed default. (1) Settled-noise
+floor from the 2026-09-20 burn-in log's tail (152s, no gas present):
+MQ2 range 144-171 (27 counts), MQ135 range 57-84 (27 counts) -- both
+far below the new WARN margins (baseline+336 MQ2, baseline+172 MQ135),
+so ambient jitter alone could never cross WARN even once, let alone
+3-of-5 times; the vote window's real purpose is filtering the
+documented airflow/movement-jump artifact (~105->~170-185 spike from
+board disturbance), not ambient noise. (2) Real gas-response shape from
+`delta_test_2_20260923_011624.log`: once a genuine rise crosses WARN
+(re-derived with the new 1121 delta: threshold ~420), it stays above
+WARN for 39 CONSECUTIVE 1Hz samples before falling back -- nothing like
+a brief single-sample artifact. 3-of-5 clears within 3-5s of a real
+event (negligible added latency against a 39s-long real signal), while
+still requiring more than one hit to pass a brief single-sample
+disturbance. No airflow-jump duration data exists yet to justify
+tightening N further, and loosening it would cut into the only margin
+that exists against that specific known false-positive mode for no
+detection-speed benefit (real events already clear 3-of-5 almost
+immediately). **Decision: keep 5/3 as configured, now evidence-backed
+rather than an unreviewed default.**
+
+**Hard ceilings set, FINAL for this prototype, not left at -1
+(2026-09-23, developer decision, Level 2 research-backed).** Reviewed
+whether any of the 3 clean delta runs actually reached a flat,
+multi-second saturation plateau: confirmed NO -- checking the raw log
+around each run's peak (e.g. `delta_test_2`: ...907->1158->1217->
+1251->1223->1125->1014...) shows every run's peak immediately turning
+over into decay the very next sample, never holding flat. So none of
+tonight's data is a true confirmed saturation ceiling; the true
+physical ceiling could be higher than anything observed so far.
+Decision: rather than leave the guard fully disabled (-1), set it from
+the highest observed peak per sensor plus a ~11-12% margin --
+`MQ2_HARD_CEILING_PLACEHOLDER = 1400` (from observed max 1251),
+`MQ135_HARD_CEILING_PLACEHOLDER = 750` (from observed max 675). This
+is explicitly a floor-only guarantee ("above everything legitimately
+observed so far"), not a claim of having found the real physical
+ceiling. **UPDATE, same session: a dedicated sustained-exposure
+plateau test was considered and explicitly DEFERRED (developer
+decision) -- real time constraints ahead of the deadline make another
+gas-stimulus test session not worth running for this specific value.
+1400/750 are accepted as FINAL for this prototype as-is, not
+provisional pending further testing.** This is a disclosed,
+deliberate limitation (the true saturation ceiling is unconfirmed and
+could exceed these numbers), not an oversight -- carry it into the
+final report's limitations section rather than presenting these as a
+lab-verified saturation point.
+
+**HVAC-state baseline gap (2026-09-20/21 finding) — RETRACTED, not a
+real environmental effect (2026-09-23).** The developer has since
+identified the AC-on/windows-closed spike (MQ2 361-379, MQ135 263-292)
+that drove this open item as caused by a wiring issue at the time, not
+a genuine HVAC-state effect on the sensors. The prior entries'
+ratio-of-ratios analysis and "clean air is HVAC-state-conditional"
+conclusion are superseded by this correction -- no multi-HVAC-state
+calibration data collection is needed. Sanity bounds
+(`MQ2/MQ135_BASELINE_MIN/MAX_PLACEHOLDER`) derived from the 6-boot
+table are unaffected by this retraction (that table's boots were not
+the AC-on session).
+
+---
+
+## Phase 13b — BASELINE_DRIFT_CAP_PER_HOUR set from the planned 1-hour undisturbed capture; split per-sensor, not settled (2026-09-23)
+
+**The 1-hour undisturbed capture planned in the previous entry ran as
+scheduled** (`eval/calibration/drift_20260923_015914.csv`, 64.2 min of
+OK-state data, 2026-09-22T20:29–21:34 UTC). This is the on-plan
+1-hour run, not a truncated/incomplete overnight log.
+
+**First attempt (rejected): using the full-window EMA-tracked rate
+directly.** Simulating the actual `BASELINE_EMA_ALPHA=0.001` tracker
+against the raw log gives a full-window rate of -10.3/hr (MQ2) and
+-6.4/hr (MQ135). A split-half check (first 32min vs second 32min, each
+computed independently) shows this is NOT a stable rate: MQ2 -15.6/hr
+vs -5.0/hr, MQ135 -14.1/hr vs +1.3/hr (sign flip). The rate itself
+varies by more than its own magnitude between halves -- the signature
+of a decaying warmup-convergence transient, not linear drift. A
+margin multiplier applied to the full-window rate would have been
+scaling an artifact, not bounding a real quantity; rejected on that
+basis before writing anything to firmware.
+
+**Basis used instead: second half only (closer to settled state), max
+excursion from its start (not net drift -- the cap must bound the
+largest single-direction swing, not just start-to-end delta).** MQ2
+5.16/hr, MQ135 1.65/hr. Researched (Level 2 deep dive) whether
+manufacturer datasheets (Winsen/Seeed/SparkFun/Pololu/Mouser) or
+standards (EN 45544/EN 50291) publish a per-hour drift figure to
+anchor to -- none do; datasheets discuss storage drift only
+qualitatively, and the standards calibrate against ppm span gas, not
+raw ADC counts on uncalibrated hardware, so not transferable. The one
+generalizable principle found (industrial practice, via Gaugify's
+calibration guide) is that zero drift is evaluated as a fraction of
+span, evaluated per-instrument, not from a universal constant --
+consistent with using this board's own measured rate rather than an
+external number.
+
+**Written to firmware, split into per-sensor constants (previously a
+single shared placeholder) since the two sensors' measured rates
+differ meaningfully:**
+`MQ2_BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER = 10` (5.16/hr x2),
+`MQ135_BASELINE_DRIFT_CAP_PER_HOUR_PLACEHOLDER = 5` (1.65/hr x2,
+floored up from ~3 since MQ135's small residual is likely
+noise/quantization-dominated at this magnitude). `applyBaselineDriftCap()`
+changed to take the cap as a parameter instead of reading the shared
+constant, so each sensor's call site passes its own value.
+
+**Explicitly NOT treated as settled -- same caveat pattern as
+MQ135's calibrated delta.** This is n=1 half-window (32 min) of
+settled-state data, not a dedicated settled-state test. x2 is a margin
+for single-sample uncertainty, not a cited external convention --
+flagged here as a judgment call, not a derived constant.
+**Recommend confirming with a dedicated post-warmup, no-stimulus
+capture (ideally 1hr+) in a future session** before treating 10/5 as
+final the way the hard ceilings and calibrated deltas already are.
+
+---
+
+## Phase 13b — BASELINE_DRIFT_CAP_PER_HOUR bench-validated via synthetic harness (2026-09-23)
+
+**`eval/test_drift_cap.py` added** -- a pure-Python port of the firmware's
+EMA baseline tracker + drift-cap guard (`BASELINE_EMA_ALPHA`,
+`applyBaselineDriftCap`, WARN = baseline + 0.30*delta), run standalone,
+no hardware, to validate the MQ2=10/MQ135=5 caps set earlier this
+session without waiting on real wall-clock hours or a live gas
+stimulus. Chosen over a passive hardware re-run or a real slow-gas test
+specifically for the time constraint around tomorrow's already-packed
+schedule (live buzzer+gas test, transport design decision, new
+Lambda/WebSocket/Live View tab, integration, dashboard visual
+re-check) -- see reasoning captured in-session before writing the
+script.
+
+**Test 1 -- synthetic slow ramp.** First attempt used an arbitrary
+ramp size (+50/+25 over 2h) and produced "WARN never crossed" under
+BOTH cap ON and cap OFF -- not a real finding, just an undersized ramp
+(only ~15% of the WARN gap, 0.30*delta, so it could never reach WARN
+regardless of the cap). Corrected by sizing `ramp_total` to 1.5x the
+WARN gap per sensor. Re-run result:
+- `cap OFF`: WARN never crosses in the 2h ramp for either sensor --
+  correctly reproduces the "learned away" failure the guard exists to
+  prevent (baseline's EMA legitimately chases the ramp upward, WARN
+  rises right along with it, gap to raw never closes).
+- `cap ON`: WARN crosses at 84.1 min (MQ2) / 83.8 min (MQ135) -- the
+  cap holds the baseline near its hourly anchor, so raw pulls away from
+  WARN and eventually trips it.
+
+One false alarm during debugging: a manual hand-trace (stepping every
+600 ticks instead of every tick) appeared to show `cap OFF` also
+crossing WARN, which looked like an inverted/broken cap. Root cause:
+skipping ticks desyncs the RNG draw sequence from the real per-tick
+simulation, so the manual trace was silently simulating a different
+(and wrong) noise sequence, not verifying the real one. Confirmed via
+a correct non-skipping trace before concluding anything -- resolved,
+not a defect in `applyBaselineDriftCap` or the harness's main loop.
+
+**Test 2 -- real passive-log replay (cap ON), reusing
+`eval/calibration/drift_20260923_015914.csv` instead of a fresh
+hardware run.** 0/3853 ticks clamped for both sensors -- the cap never
+engages on genuine normal (no-gas) data, so no false "trouble" chirps
+expected from ordinary baseline wandering at this magnitude.
+
+**Both claims the cap needs to satisfy are now bench-confirmed:**
+(A) does not false-trigger on real ordinary drift (0% engagement on
+real data), (B) does catch a synthetic slow-onset rise that would
+otherwise never trip WARN (crosses at ~84min instead of never).
+
+**Caveat, stated plainly:** the 84min figure is specific to the one
+ramp shape tested (linear, reaching 1.5x the WARN gap over 2h) --
+not "the" detection latency for all possible slow leaks. A shallower
+or slower real leak would take longer to detect via this guard; a
+faster one likely gets caught by the independent hard-ceiling guard
+instead, which does not depend on this cap at all. This bench result
+supports MQ2=10/MQ135=5 as reasonable working values, but does not
+replace the previously-recommended dedicated real hardware
+settled-state capture -- that remains open, not superseded.
+
+---

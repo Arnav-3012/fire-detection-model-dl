@@ -10,6 +10,15 @@ import ChartTooltip from "../components/ChartTooltip";
 import Reveal from "../components/Reveal";
 import { SkeletonMetricCard, SkeletonPanel } from "../components/Skeleton";
 import { FlameIcon, PinIcon, ClockIcon, ChartIcon, PercentIcon, AlertTriangleIcon } from "../components/icons";
+import { formatTimestamp } from "../formatTimestamp";
+
+// Device considered offline if the freshest live sample is older than
+// this. Backend samples at 1 Hz and the frontend polls every 3s (see
+// usePolling call sites), so a healthy feed always has a sample well
+// under 10s old; 12s gives one full missed poll cycle of slack before
+// flagging main.py as down, rather than flickering "offline" on every
+// minor timing jitter.
+const LIVE_STALE_MS = 12_000;
 
 export default function Overview({ incidents, liveSensors, station, loading }) {
   const [fusionHover, setFusionHover] = useState(null);
@@ -64,11 +73,34 @@ export default function Overview({ incidents, liveSensors, station, loading }) {
   // incident" is computed once and can't drift between the two.
   const liveReadings = liveSensors?.ok ? liveSensors.readings ?? [] : [];
   const latestLive = liveReadings.length ? liveReadings[liveReadings.length - 1] : null;
-  const isLiveLevel = latestLive?.level != null;
+  // Staleness check (fixes the "device offline still shows a percentage"
+  // bug): liveSensors.ok only means the file existed and parsed — it says
+  // nothing about whether edge/main.py is still actually running and
+  // writing to it. A stopped process leaves its last file in place
+  // forever, which used to read as a perfectly healthy live gauge. Compare
+  // the freshest sample's own timestamp (unix seconds, edge/livelog.py) to
+  // wall-clock now instead of trusting `ok` alone.
+  const latestLiveAgeMs = latestLive ? Date.now() - latestLive.timestamp * 1000 : Infinity;
+  const isDeviceOffline = !latestLive || latestLiveAgeMs > LIVE_STALE_MS;
+  const isLiveLevel = latestLive?.level != null && !isDeviceOffline;
   const displayLevel = isLiveLevel ? latestLive.level : mostRecent?.level;
 
   const x = incidents.map((i) => i.timestamp);
   const y = incidents.map((i) => levelIndex(i.level));
+  // Date-once check (same fix as LiveSensorChart): only worth collapsing to
+  // a single header date + time-only ticks when every visible incident
+  // actually falls on the same calendar day — unlike the live sensor
+  // chart's fixed short rolling window, this chart's span depends on how
+  // many incidents exist and can legitimately cross days, in which case
+  // Plotly's existing date+time tick format (see the tickpad comment
+  // below) is the correct, already-working behavior and must stay.
+  const incidentDates = incidents.map((i) => new Date(i.timestamp));
+  const allSameDay =
+    incidentDates.length > 0 &&
+    incidentDates.every((d) => d.toDateString() === incidentDates[0].toDateString());
+  const fusionDateLabel = allSameDay
+    ? incidentDates[0].toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : null;
   const colors = incidents.map((i) => LEVEL_COLOR[i.level] ?? "#6b7280");
   // CRITICAL points get a visibly larger marker + a soft glow halo (via a
   // second, larger, translucent marker trace beneath) so the eye lands on
@@ -151,6 +183,9 @@ export default function Overview({ incidents, liveSensors, station, loading }) {
             total={total}
             isLive={isLiveLevel}
             liveLevel={latestLive?.level}
+            isOffline={isDeviceOffline}
+            lastSeenTimestamp={latestLive ? latestLive.timestamp * 1000 : null}
+            lastSeenLevel={latestLive?.level}
           />
         </div>
         <div className="col-7">
@@ -189,7 +224,10 @@ export default function Overview({ incidents, liveSensors, station, loading }) {
               content, like every other panel. */}
           <Reveal className="panel glass chart-panel">
             <div className="chart-panel-header">
-              <h3 className="panel-title"><ChartIcon />Fusion level timeline</h3>
+              <h3 className="panel-title">
+                <ChartIcon />Fusion level timeline
+                {fusionDateLabel && <span className="panel-title-subtitle"> — {fusionDateLabel}</span>}
+              </h3>
               {displayLevel && (
                 <div className="chart-panel-stat">
                   {/* "current" alone was misleading when this only ever
@@ -308,6 +346,14 @@ export default function Overview({ incidents, liveSensors, station, loading }) {
                     // 2026"-style date ticks get the same breathing room
                     // from the plot as the y-axis labels now do.
                     tickpad: 12,
+                    // Date-once fix: when every incident falls on the same
+                    // calendar day, the date is already shown once in the
+                    // header subtitle above — force time-only ticks here so
+                    // the date isn't ALSO repeated on every tick. When
+                    // incidents span multiple days, omit this and let
+                    // Plotly's default date+time auto-format stand (still
+                    // correct in that case — see the tickpad comment above).
+                    ...(allSameDay ? { tickformat: "%H:%M:%S" } : {}),
                   },
                   shapes: [...levelBands, ...rowGridlines, safeBaseline],
                   // range:[-0.5,3.5] was already correct in the prior pass —
@@ -356,7 +402,7 @@ export default function Overview({ incidents, liveSensors, station, loading }) {
                     top: bounds ? e.event.clientY - bounds.top : e.event.clientY,
                     title: level,
                     rows: [
-                      ["Timestamp", timestamp],
+                      ["Timestamp", formatTimestamp(timestamp)],
                       ["p_fire", pFire],
                       ["gas_high", String(gasHigh)],
                     ],
@@ -404,7 +450,69 @@ export default function Overview({ incidents, liveSensors, station, loading }) {
 // self-recovering live status — preferred here whenever it exists.
 // Falls back to the last-incident logic only when there's no live feed
 // at all (edge/main.py not running), so the gauge never renders blank.
-function SystemHealthHero({ mostRecent, recentCritical, total, isLive, liveLevel }) {
+//
+// Device-offline fix (developer report): `/api/live-sensors` returning
+// `ok: true` only means data/live_sensors.json existed and parsed — it
+// says nothing about whether edge/main.py is still actually running.
+// A killed process leaves its last file in place forever, which used to
+// read as a perfectly healthy percentage. `isOffline` (computed by the
+// caller from the freshest sample's own timestamp vs. wall-clock now)
+// takes priority over everything else here: no percentage, no ring
+// value implying a live number — just a clear "Device Offline" state
+// plus the last known status/timestamp, so the card is informative
+// instead of quietly wrong or going blank.
+function SystemHealthHero({
+  mostRecent,
+  recentCritical,
+  total,
+  isLive,
+  liveLevel,
+  isOffline,
+  lastSeenTimestamp,
+  lastSeenLevel,
+}) {
+  if (isOffline) {
+    const hasEverSeenLive = lastSeenTimestamp != null;
+    const offlineColor = "#6b7280";
+    return (
+      <div className="glass hero" style={{ height: "100%" }}>
+        <div className="hero-ring">
+          <svg viewBox="0 0 132 132">
+            <circle className="hero-ring-track" cx="66" cy="66" r={56} />
+          </svg>
+          <div className="hero-ring-label">
+            <span className="value" style={{ fontSize: "1.1rem", color: offlineColor }}>
+              Offline
+            </span>
+            <span className="caption">device offline</span>
+          </div>
+        </div>
+        <div className="hero-body">
+          <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <FlameIcon width={17} height={17} style={{ color: offlineColor, flexShrink: 0 }} />
+            System status
+          </h2>
+          <p>
+            {hasEverSeenLive
+              ? "No live feed from the edge device — is edge/main.py running?"
+              : "No live feed and no incidents recorded yet — waiting for edge/main.py."}
+          </p>
+          <div className="hero-badges">
+            <span className="status-pill status-pill--negative">DEVICE OFFLINE</span>
+          </div>
+          {hasEverSeenLive && (
+            <p style={{ marginTop: 8, fontSize: "0.85rem", color: "var(--text-dim)" }}>
+              Last seen: {formatTimestamp(lastSeenTimestamp)} — last level:{" "}
+              <span style={{ color: LEVEL_COLOR[lastSeenLevel] ?? "var(--text-dim)", fontWeight: 600 }}>
+                {lastSeenLevel}
+              </span>
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const level = isLive ? liveLevel : mostRecent?.level ?? "SAFE";
   const color = LEVEL_COLOR[level] ?? LEVEL_COLOR.SAFE;
   const idx = levelIndex(level);
@@ -450,7 +558,7 @@ function SystemHealthHero({ mostRecent, recentCritical, total, isLive, liveLevel
           {isLive ? (
             <span className="app-subtitle">live</span>
           ) : (
-            mostRecent && <span className="app-subtitle">{mostRecent.timestamp}</span>
+            mostRecent && <span className="app-subtitle">{formatTimestamp(mostRecent.timestamp)}</span>
           )}
         </div>
       </div>
@@ -485,7 +593,7 @@ function RecentEventCard({ mostRecent, recentCritical }) {
           <div className="panel-row">
             <div className="panel-row-label"><span>Time</span></div>
             <div className="panel-row-value" style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--text-dim)" }}>
-              {mostRecent.timestamp}
+              {formatTimestamp(mostRecent.timestamp)}
             </div>
           </div>
         </div>

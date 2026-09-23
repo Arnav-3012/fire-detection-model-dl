@@ -4,6 +4,7 @@ import StateCard from "../components/StateCard";
 import Reveal from "../components/Reveal";
 import { SkeletonPanel } from "../components/Skeleton";
 import { ArchiveIcon } from "../components/icons";
+import { formatTimestamp } from "../formatTimestamp";
 
 function OwnerResponsePill({ response }) {
   if (!response) return <span className="status-pill status-pill--neutral">none</span>;
@@ -78,7 +79,7 @@ export default function HistoricalArchive({ archive, error, loading }) {
               <tbody>
                 {devices[device].map((inc) => (
                   <tr key={inc._s3_key}>
-                    <td>{inc.timestamp}</td>
+                    <td>{formatTimestamp(inc.timestamp)}</td>
                     <td>
                       <LevelBadge level={inc.level} />
                     </td>

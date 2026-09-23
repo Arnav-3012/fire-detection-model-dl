@@ -31,3 +31,17 @@ data/live_sensors.json
 
 # calibration logs (raw measurement data, not source)
 eval/calibration/*.csv
+eval/calibration/*.log
+
+# eval output (generated, not source)
+eval/results.csv
+
+# local hardware trial logs and archived/superseded data snapshots — not source
+logs/
+
+# runtime sensor baseline data
+baseline_history.json
+
+# graphify cache/incremental state — regenerable, not source
+graphify-out/cache/
+graphify-out/.graphify_incremental.json

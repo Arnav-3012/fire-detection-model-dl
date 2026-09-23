@@ -4,6 +4,7 @@ import { darkLayout, plotlyConfig } from "../plotlyTheme";
 import StateCard from "./StateCard";
 import ChartTooltip from "./ChartTooltip";
 import { GaugeIcon } from "./icons";
+import { formatTimestamp } from "../formatTimestamp";
 
 // Brand pivot (2026-09-04): mq2/mq135 deliberately stay on cool tones
 // (steel-blue / violet) rather than moving onto the new warm ember chrome —
@@ -83,7 +84,19 @@ export default function LiveSensorChart({ liveSensors }) {
   const x = readings.map((r) => new Date(r.timestamp * 1000));
   const mq2 = readings.map((r) => r.mq2);
   const mq135 = readings.map((r) => r.mq135);
-  const timeLabels = x.map((d) => d.toLocaleTimeString());
+  // formatTimestamp expects unix seconds or an ISO string, not a Date
+  // object — divide back down since `x` above is already `new Date(...)`.
+  const timeLabels = x.map((d) => formatTimestamp(d.getTime() / 1000));
+  // Date-once, time-per-tick fix: this chart's window is seconds-to-minutes
+  // (600-sample rolling buffer at 1 Hz = 10 min max), so Plotly's default
+  // date-tick auto-formatter was choosing a full weekday+month format and
+  // then truncating it identically on every tick ("Sun Se…" repeated) —
+  // meaningless since the whole visible span is almost always the same
+  // calendar day. `xaxis.tickformat` below forces time-only ticks; the date
+  // is shown once, in the header, derived from the freshest sample.
+  const latestDateLabel = x.length
+    ? x[x.length - 1].toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : null;
   const latestMq2 = mq2.length ? mq2[mq2.length - 1] : null;
   const latestMq135 = mq135.length ? mq135[mq135.length - 1] : null;
 
@@ -141,7 +154,10 @@ export default function LiveSensorChart({ liveSensors }) {
     // across the dashboard.
     <div className="panel glass glass--cool chart-panel">
       <div className="chart-panel-header">
-        <h3 className="panel-title"><GaugeIcon />Live gas sensor readings</h3>
+        <h3 className="panel-title">
+          <GaugeIcon />Live gas sensor readings
+          {latestDateLabel && <span className="panel-title-subtitle"> — {latestDateLabel}</span>}
+        </h3>
         {latestMq2 !== null && latestMq135 !== null && (
           <div className="chart-panel-stat">
             <span className="stat-caption">mq-2</span>
@@ -218,7 +234,12 @@ export default function LiveSensorChart({ liveSensors }) {
                 // `tickpad`) was too tight on both axes. Explicit tickpad +
                 // a touch more left margin for real breathing room.
                 margin: { ...darkLayout.margin, l: 58, r: 96, t: 12, b: 46 },
-                xaxis: { ...darkLayout.xaxis, title: "", tickpad: 12 },
+                // tickformat "%H:%M:%S" (Plotly's d3-time-format spec):
+                // time-only per tick, no date component at all — the date
+                // is shown once, in the header subtitle above, instead of
+                // Plotly's default auto-formatter repeating a truncated
+                // weekday+month string on every single tick.
+                xaxis: { ...darkLayout.xaxis, title: "", tickpad: 12, tickformat: "%H:%M:%S" },
                 yaxis: { ...darkLayout.yaxis, title: "ADC reading", range: yRange, tickpad: 12 },
               }}
               config={plotlyConfig}

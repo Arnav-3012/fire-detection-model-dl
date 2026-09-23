@@ -4,6 +4,7 @@ import StateCard from "../components/StateCard";
 import Reveal from "../components/Reveal";
 import { SkeletonPanel } from "../components/Skeleton";
 import { LEVEL_COLOR } from "../levels";
+import { formatTimestamp } from "../formatTimestamp";
 
 // Blog/feed-style presentation (design brief) — one card per incident,
 // headline summary up front, full raw row on expand. Replaces the prior
@@ -97,7 +98,7 @@ export default function LiveIncidents({ incidents, loading }) {
                     <LevelBadge level={row.level} pulse />
                     <strong>{row.level === "CRITICAL" ? "Critical hazard event" : row.level === "WARNING" ? "Warning-level event" : `${row.level} event`}</strong>
                     {row.outcome && <OutcomePill outcome={row.outcome} />}
-                    <span className="incident-card__time">{row.timestamp}</span>
+                    <span className="incident-card__time">{formatTimestamp(row.timestamp)}</span>
                   </div>
                   <p className="incident-card__summary">
                     {summarize(row)}

@@ -4,6 +4,7 @@ import StateCard from "../components/StateCard";
 import Reveal from "../components/Reveal";
 import { SkeletonPanel } from "../components/Skeleton";
 import { ChartIcon, CheckListIcon } from "../components/icons";
+import { formatTimestamp } from "../formatTimestamp";
 
 export default function EvaluationTrials({ trials, loading }) {
   if (loading) {
@@ -67,8 +68,8 @@ export default function EvaluationTrials({ trials, loading }) {
           <tbody>
             {rows.map((row, idx) => (
               <tr key={idx}>
-                {Object.values(row).map((val, i) => (
-                  <td key={i}>{val}</td>
+                {Object.entries(row).map(([col, val], i) => (
+                  <td key={i}>{col === "timestamp" ? formatTimestamp(val) : val}</td>
                 ))}
               </tr>
             ))}

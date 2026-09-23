@@ -17,8 +17,17 @@ mq135_warn=98.77, which was measured on warmed sensors. Only the gas
 contribution is suppressed; vision detection runs normally throughout, so
 the worst case during the gate is a WARNING (vision-only cap), never a
 false gas-corroborated CRITICAL.
+
+Video source (phase13a-2, togglable test mode): defaults to the laptop
+webcam. Pass --video-source http://<esp32-ip>/stream to read frames from
+the ESP32-CAM's MJPEG stream instead — only where frames come from
+changes; model loading, preprocessing, TemporalVoter, and thresholds in
+vision.py are untouched.
+
+    python edge/main.py --video-source http://<esp32-ip>/stream
 """
 
+import argparse
 import base64
 import time
 
@@ -98,14 +107,33 @@ def format_status(
     )
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="FireWatch edge loop")
+    parser.add_argument(
+        "--video-source",
+        default=None,
+        help=(
+            "Video source: an MJPEG stream URL (e.g. http://<esp32-ip>/stream) "
+            "to read from the ESP32-CAM. Omit to use the laptop webcam "
+            "(edge/camera.py's default DEVICE_INDEX), the normal path."
+        ),
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+
     with open("config.yaml") as f:
         config = yaml.safe_load(f)
     warmup_seconds = float(config["sensors"]["gas_warmup_seconds"])
     notify_cooldown = float(config["fusion"]["notify_cooldown_seconds"])
     agent_url = config["agent"]["incident_url"]
 
-    camera = Camera()  # camera failure = loud error + exit, per edge/camera.py
+    # camera failure = loud error + exit, per edge/camera.py. --video-source
+    # swaps only where frames come from (phase13a-2); everything downstream
+    # (vision, fusion, alarm) is identical either way.
+    camera = Camera(args.video_source) if args.video_source else Camera()
     model = VisionModel()
     thresholds = load_gas_thresholds()
     reader = SensorReader()

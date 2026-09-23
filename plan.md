@@ -24,9 +24,10 @@
 7. [Day-by-day schedule](#7-day-by-day-schedule)
 8. [Claude Code prompts per phase](#8-claude-code-prompts-per-phase)
 9. [Cut list](#9-cut-list)
-10. [Appendix A — Hardware primer](#appendix-a--hardware-primer)
-11. [Appendix B — Troubleshooting](#appendix-b--troubleshooting)
-12. [Appendix C — Report checklist](#appendix-c--report-checklist)
+10. [Phase 13 — ESP32-CAM migration (finalized plan, NOT STARTED)](#10-phase-13--esp32-cam-migration-finalized-plan-not-started)
+11. [Appendix A — Hardware primer](#appendix-a--hardware-primer)
+12. [Appendix B — Troubleshooting](#appendix-b--troubleshooting)
+13. [Appendix C — Report checklist](#appendix-c--report-checklist)
 
 ---
 
@@ -757,6 +758,144 @@ data/incidents/ when S3 is unreachable.
 Wire this into agent/graph.py as a side effect in the simulate node.
 ```
 
+### Day 11 — evaluation trial plan (reduced set, 2026-09-05)
+
+**Deliberate reduction from the 4.4 minimum, not an oversight.** info.md
+4.4 specifies ≥20 hazard + ≥20 non-hazard trials. Given real time
+constraints ahead of the 7 September 2026 deadline, the developer chose
+to scale down to a smaller, still-balanced **12-trial set (6 hazard, 6
+non-hazard)** that deliberately covers every fusion rule and known
+limitation on record, rather than run 40+ trials that would mostly
+repeat the same few code paths. This reduction and its reasoning must
+be carried into the final report wherever trial results are written up
+— it is not to be presented as if 20+20 were run.
+
+Each trial is run with `eval/run_trial.py` (built Phase 11, idle since
+2026-09-03) and logged to `eval/results.csv`. A trial below is marked
+complete only once the developer explicitly confirms it was run; each
+row is then cross-checked against `eval/results.csv` (trial_id,
+timestamp, actual_outcome, latency) and marked PASS/FAIL against the
+expected outcome listed here.
+
+**Gas-sensor warm-up note (2026-09-05):** the MQ sensors' hardware was
+disconnected/unused for ~2 days; the developer has re-armed the full
+5-minute (300s) `gas_warmup_seconds` gate from a genuine fresh
+power-cycle (not a continuation of prior warm-up progress). Before
+running any hazard trial that depends on a gas trigger (3, 4, 5, 6),
+confirm the console shows `GATED` / `gas_high` suppressed, and let the
+gate clear naturally — do not bypass or shorten it.
+
+#### Hazard trials (expect escalation)
+
+| # | Status | Trial | Expected outcome |
+|---|---|---|---|
+| 1 | PASS | Fire video (phone) alone, no gas trigger | WARNING |
+| 2 | PASS (see note) | Fire video (phone) + gas-stove trigger near MQ-2 | CRITICAL |
+| 3 | PASS | Gas-stove trigger alone, neutral camera view (no fire-like visual) | WARNING ("gas concentration high, no visible flame") |
+| 4 | PASS (see note) | Alcohol/sanitizer trigger near MQ-135 alone, neutral camera view | WARNING (gas high, no flame) |
+| 5 | PASS | Fire video (phone) + alcohol/sanitizer trigger near MQ-135 | CRITICAL |
+| 6 | PASS | Gas-stove trigger + camera pointed AWAY from any fire-like footage | WARNING, not CRITICAL — confirms gas-alone never falsely escalates without vision agreement |
+
+#### Non-hazard trials (expect SAFE, or a correctly bounded known limitation)
+
+| # | Status | Trial | Expected outcome |
+|---|---|---|---|
+| 7 | PASS | Empty room, camera on, nothing happening | SAFE |
+| 8 | PASS (see note) | Developer sitting normally in frame, talking/moving naturally | SAFE |
+| 9 | PASS | Red clothing in frame | 0 alarms (SAFE) — per the existing adversarial-scenario bar (info.md 4.2) |
+| 10 | PASS | TV/laptop-fire footage, no gas trigger | WARNING — the already-documented, bounded known limitation from Phase 5; must NOT reach CRITICAL, confirming the fusion cap (rule 4) still holds on the now-promoted v4 model |
+| 11 | PASS | Bright light exposing the textured wall/background (the exact scenario that triggered the smoke-recall investigation and v4 retrain) | SAFE — live confirmation that the v4 fix holds under real conditions |
+| 12 | FAIL — new finding | Normal room lighting changes (lamp on/off, walking past a window, ambient light shifts) | SAFE throughout |
+
+**Trial 8 note (2026-09-05):** first clean attempt (`person_in_frame_v2`,
+23:51:29) logged WATCH (FAIL); immediate rerun (23:53:27) logged SAFE
+(PASS) with no deliberate change in conditions between runs. Marked
+PASS on the second result but flagged here as borderline/non-repeatable
+rather than a clean pass — worth re-running once more or noting in the
+final report as an observed smoke-vote borderline case, not silently
+dropped. A separate earlier attempt (`person_in_frame`, 23:42:54, WARNING)
+was invalidated — a flashlight was accidentally held close to the camera,
+not a genuine trial condition — and is excluded from this count.
+
+**Trial 9 note (2026-09-05):** first attempt (`red_clothing`, 23:56:22)
+logged WARNING (FAIL) — invalidated, the cloth was held very close to
+the camera, a different visual input than the established "person
+wearing red clothing at normal distance" adversarial scenario (plan.md
+§6, info.md 4.2). Clean rerun at normal framing distance (`red_clothing`,
+23:58:03) logged SAFE (PASS), consistent with every prior model version
+(v1-v4) on this exact scenario. The 23:56:22 row stays in
+`eval/results.csv` as an honest record but is excluded from this trial's
+result.
+
+Trial 11 re-verifies the v4 smoke-recall fix and trial 10 re-verifies
+the TV-fire known limitation, both under the newly-promoted production
+model — these two are deliberately retained from the wider set as the
+highest-value checks, not arbitrary picks.
+
+**Trial 11 note (2026-09-06):** first attempt (`bright_wall_v4_recheck`,
+00:03:52) logged WARNING at 11.4s latency (FAIL) — reached WARNING fast,
+suggesting an early transient rather than a sustained smoke lock.
+Immediate rerun (00:06:35) held SAFE throughout (PASS). Cause of the
+first attempt's brief WARNING identified by the developer: the camera
+lens was still autofocus-hunting (focusing/unfocusing) at trial start,
+producing transient blur on the textured wall — a camera-startup
+artifact, not a model regression. The clean second run (lens settled)
+is the representative result: SAFE throughout, confirming the v4
+smoke-recall fix holds under real conditions.
+
+**Trial 2 note (2026-09-06):** first attempt (00:54:04) correctly logged
+CRITICAL (fusion/vision/gas logic all correct) but the physical buzzer
+did not audibly sound — root-caused by the developer as a loose
+hardware wiring connection on the buzzer circuit (D8), not a code or
+fusion bug; the fusion `*** LOCAL ALARM ON ***` transition and serial
+write path were never in question. Reseated the connection and
+reran (01:00:15): CRITICAL logged again, buzzer audibly sounded this
+time. Marked PASS on the working rerun, but this is a genuine hardware-
+reliability finding worth a line in the final report's limitations/
+cost section — a loose D8 connection can silently defeat the local
+alarm even when detection and fusion are functioning correctly.
+
+**Trial 4 note (2026-09-06):** first attempt (01:06:48) escalated all
+the way to CRITICAL at 110.7s (FAIL) despite a neutral camera view with
+no fire-like content — developer identified a camera/webcam glitch
+(freeze, autofocus hunt, or exposure spike) as the cause, producing a
+spurious high `p_fire` vote unrelated to what was actually in frame,
+the same pattern seen in trial 11's autofocus artifact. Clean rerun
+(01:08:29) correctly held at WARNING (gas high, no visible flame) as
+expected — PASS. **This is the second observed instance of a camera
+artifact spuriously inflating p_fire** (trial 11, trial 4) — worth
+flagging as a recurring nuisance/limitation in the final report: the
+webcam's autofocus/exposure transients can occasionally masquerade as
+visual fire evidence for a few frames, which is exactly the failure
+mode the temporal voter (5-of-8) is designed to filter, but a
+sufficiently sustained glitch can still clear the vote threshold as
+seen here. Not fixed on the spot; recommend letting the camera settle
+(no active autofocus hunting) for a few seconds before starting a trial
+as a practical mitigation, and noting the underlying model sensitivity
+as a known limitation.
+
+**Trial 12 — NEW ADVERSARIAL FINDING, not an invalid trial (2026-09-06):**
+`lighting_changes` (00:25:36) genuinely FAILED — logged WARNING at
+86.5s. Console trace shows `p_fire` climbing steadily 0.29 -> 0.96 over
+roughly 4 seconds of complete darkness (no light at all), reaching 5/8
+temporal votes and firing a real local alarm ("visual flame, unconfirmed
+by sensors"), with `gas_high=False` throughout — this is a genuine
+vision-side false positive in near-black frames, not gas involvement,
+not sensor noise misread as a bug in the harness. It self-de-escalated
+back to SAFE once votes decayed after the room was no longer fully dark.
+Likely cause (not yet confirmed): the training data probably has no or
+few true near-black/heavily underexposed negative frames, so a webcam's
+auto-exposure noise/grain in total darkness may resemble fire-like
+texture to the model. **This is a new, previously undocumented
+limitation** — distinct from the bright-wall/textured-background issue
+that drove the v4 retrain (opposite lighting extreme, likely different
+root cause). Not fixed on the spot (no retrain/threshold tuning
+performed) — recorded here as an open item for the final report's
+limitations section. Partial pass note: SAFE held correctly through
+ordinary lighting variation (lamp on/off with the room otherwise lit,
+walking past a window) — the failure is specific to sustained total
+darkness, not general lighting sensitivity.
+
 ### Day 11 — dashboard
 
 ```
@@ -803,6 +942,333 @@ If behind schedule, cut in this exact order:
 - Buzzer and LED local alarm
 - The offline (cable-unplugged) demo
 - The simulated-dispatch safety framing
+
+---
+
+## 10. Phase 13 — ESP32-CAM migration (two-board architecture, IN PROGRESS)
+
+**Status: hardware IN PROGRESS, firmware NOT STARTED on the sensor
+board.** Camera board is flashed and confirmed (§10.10a); sensor board
+wiring is confirmed working but burn-in/calibration is not complete
+and no firmware has been written for it yet. This section finalizes
+the architecture decided with the developer and a faculty-suggested
+advancement beyond the original 12-day scope; it does not change the
+status of the existing prototype (see context.md §3 — that system is
+FUNCTIONALLY COMPLETE, submitted, and fully unaffected by this
+future-phase plan).
+
+**ARCHITECTURE, corrected 2026-09-16 (see §10.0a — supersedes every
+single-board description below and elsewhere in this section):**
+FireWatch's Phase 13 hardware is TWO separate ESP32 boards, not one.
+Wherever the rest of this section says "the ESP32" or "the ESP32-CAM"
+in the context of sensors, buzzer, or gas-only fallback, read that as
+the **plain ESP32 DevKit** described in §10.0a — the ESP32-CAM itself
+is camera/vision only and carries no sensor wiring.
+
+**Hardware in hand:** AI-Thinker ESP32-CAM (OV2640 camera) + its MB
+shield programmer, plus a plain ESP32 DevKit V1 (30-pin, added
+2026-09-16) carrying MQ-2, MQ-135, and the buzzer — reusing the
+existing MQ-2, MQ-135, buzzer, breadboard, and jumpers from the
+Arduino build.
+
+**The Arduino Uno and `arduino/sensor_node.ino` are fully retired by
+this migration.** Between the two ESP32 boards, the Arduino's role
+(camera, gas sensors, buzzer, and now networking) is fully replaced —
+rather than supplemented — by two boards instead of one.
+
+### 10.0a Two-board split and sensor pin map (added 2026-09-16)
+
+**Board 1 — ESP32-CAM (AI-Thinker, on its MB shield):** camera/vision
+only. No sensor wiring. Confirmed flashed and working (§10.10a).
+
+**Board 2 — plain ESP32 DevKit V1 (30-pin):** MQ-2, MQ-135, buzzer.
+Chosen specifically because this board exposes genuine ADC1 pins —
+the ESP32-CAM's only free header pins for this purpose (IO12-15) are
+ADC2, tied to the SD/flash bus, and unreliable during active WiFi
+transmission. Putting sensors on a board with real ADC1 access
+eliminates that ADC1-vs-ADC2/WiFi conflict entirely, rather than
+managing it as an accepted risk.
+
+**Confirmed pin assignment (plain ESP32 DevKit):**
+
+| Component | Signal | → ESP32 DevKit pin | Notes |
+|---|---|---|---|
+| MQ-2 | A0 (via divider) | **GPIO34** | ADC1, input-only |
+| MQ-135 | A0 (via divider) | **GPIO35** | ADC1, input-only |
+| Buzzer | + | **GPIO33** | digital out |
+| MQ-2 / MQ-135 | D0 | *unwired* | analog-only design, per Appendix A.2 — never use D0 |
+
+- **UPDATED 2026-09-17 (first pass) — divider changed, breadboard
+  topology replaces direct jumpers.** Both MQ-2 and MQ-135 initially
+  moved to a **10kΩ/15kΩ (2:3) voltage divider** (output = input ×
+  0.6) before reaching the GPIO — the sensor's A0 can swing toward 5V,
+  and these GPIOs are 3.3V-max. At 5V × 0.6 = 3.0V, this was confirmed
+  still under the 3.3V limit, but with **less safety margin** than the
+  prior 270Ω/270Ω (1:1, ×0.5) divider. Current draw is correspondingly
+  much lower (kΩ-range divider vs. the old Ω-range one) — a different
+  design philosophy (low current draw vs. maximum safety margin),
+  both individually valid, but a real, distinct change from what was
+  previously reasoned through and logged for the 1:1 divider.
+- **SUPERSEDED same night — divider changed again to 22kΩ(top)/10kΩ
+  (bottom), ×0.3125 scaling, max ~1.56V for a 5V sensor output.** This
+  second rewire was not logged at the time it was made; it is being
+  recorded now after the fact, alongside the ADC-floor investigation
+  below. **This ratio is suspected too aggressive** — see "MQ sensor
+  near-zero WARMUP readings — ADC floor + divider margin investigation
+  (2026-09-17)" further down and logs.md for the full analysis. Do not
+  treat 22k/10k as validated; it is flagged for likely reversion back
+  toward the 10k/15k (or similar, ×0.5–0.6) range pending confirmation
+  against the sensor's actual measured clean-air output voltage.
+- **Reason for the original change (270Ω/270Ω → 10kΩ/15kΩ):** the
+  original direct-jumper wiring was unreliable under physical
+  movement — Dupont jumper connections loosening enough to cause large
+  (~100+ count) reading jumps when the board was bumped, even when
+  visibly seated (see logs.md "UNRESOLVED: board-movement causes
+  reading jumps"). Soldering was not available as a fix (parts need to
+  stay reusable), so the sensors were moved to a **breadboard-based**
+  wiring topology instead of staying on direct point-to-point jumpers,
+  to get more mechanically stable connections without soldering.
+- **New topology (breadboard-based, identical pattern for both
+  sensors):** ESP32 GND → breadboard negative rail; ESP32 5V/Vin →
+  breadboard positive rail; sensor VCC → positive rail; sensor GND →
+  negative rail; sensor A0 → breadboard row A; top resistor row A →
+  row B; bottom resistor row B → negative rail; row B (the divider
+  junction) → the sensor's GPIO (34 for MQ-2, 35 for MQ-135). Each
+  sensor's divider occupies its own separate breadboard rows. (Row
+  labels unchanged across both the 10k/15k and 22k/10k rewires — only
+  the resistor values changed.)
+- Both dividers' ground legs return to a shared GND rail with the
+  ESP32 DevKit's own GND.
+- This is a **12-bit ADC** (0-4095), unlike the Arduino Uno's 10-bit
+  ADC (0-1023) that Appendix A.2 and §5.5's calibration formula were
+  originally written against. The formula's *shape* (a proportion of
+  peak-baseline swing) is scale-invariant, but **whether to reuse it
+  unchanged against fresh 12-bit baseline/peak numbers, or re-derive
+  it, is an open decision — not yet made.** See logs.md "Phase 13 —
+  architecture change: two-board split" for the flagged discussion.
+- **VOID as of 2026-09-17 — captured under the old divider, not
+  reusable.** "Working hardware confirmed via Serial Monitor
+  (2026-09-16): stable, correlated ~100-190 range readings on both
+  sensors during warm-up" and the movement-jump finding below (both
+  originally logged against the **270Ω/270Ω (1:1, ×0.5)** divider) do
+  **not** translate to the new **10kΩ/15kΩ (2:3, ×0.6)** divider's
+  output scale for the same real-world gas concentration — a different
+  divider ratio changes the ADC codes produced for a given sensor
+  output voltage, so none of these numbers may be reused, rescaled, or
+  treated as informal baseline data once the rewire is physically
+  done. See logs.md 2026-09-17 entry for the full statement.
+- **New finding, real and repeatable (numbers void, see above):** both
+  sensors' readings jumped (~105→~170-185, under the OLD divider) when
+  the board was physically moved or disturbed by airflow — not gas
+  presence (both sensors moved together, ruling out a wiring fault).
+  This is a known MQ-sensor airflow-sensitivity behavior and a genuine
+  false-positive risk for the threshold formula above if the
+  deployment site has ambient air movement. **Mitigation not yet fully
+  resolved** — a `SUSPECT_JUMP` firmware-side flagging stopgap exists
+  (inert until tuned, see logs.md), but the underlying physical fix is
+  what changed here (breadboard rewire, above); whether a
+  sustained-duration gas check (N-of-M, mirroring `edge/vision.py`'s
+  TemporalVoter) or a wider baseline margin is also needed remains
+  undecided, to be revisited with the actual `edge/`/`fusion.py` code
+  in view, not blind.
+
+### 10.1 Inference location — decided: cloud, not on-device
+
+Research confirmed MobileNetV3-Small, even INT8-quantized, exceeds the
+ESP32's realistic memory/compute budget for real-time inference.
+Genuine on-device TinyML would require an entirely new, smaller
+architecture trained from scratch, with an expected accuracy drop
+below the proven v4 model (fire recall 0.9575, smoke recall 0.8511).
+
+**Decision:** run the existing v4 ONNX model **unmodified** in AWS
+Lambda (cloud inference) — full accuracy preserved, zero retraining
+risk. This mirrors real production patterns: Ring- and Wyze-style
+cameras relay to cloud/hub compute rather than running detection on
+the camera's own tiny chip. MobileNet-class models are designed for
+phone/edge-device-class hardware, not bare microcontrollers.
+
+### 10.2 Cost — real estimate against AWS Lambda's free tier
+
+AWS Lambda's permanent free tier: 1M requests/month + 400,000
+GB-seconds/month.
+
+At 640×480 @ 5fps, for an estimated **15 hours of total trial/demo
+usage** (not continuous 24/7):
+
+- ~270,000 requests → 27% of the free tier
+- ~81,000 GB-seconds → 20% of the free tier
+
+**Genuinely $0 for the realistic usage pattern**, confirmed against
+published AWS pricing.
+
+### 10.3 Camera specs — OV2640 assumption, SUPERSEDED by measurement (2026-09-16)
+
+Original assumption: 25–30fps at VGA (640×480) with on-chip JPEG
+compression, ~12–28KB per frame. Practical streaming target: 640×480 @
+5fps — a stable, well-documented configuration, not the camera's
+theoretical peak. **This assumed OV2640 hardware-JPEG encoding.**
+
+**Invalidated 2026-09-16:** the actual on-board sensor is a GalaxyCore
+GC2145 clone, not a genuine OV2640 (see §10.10/logs.md Phase 13a JPEG
+root-cause finding) — it has no on-chip JPEG encoder, so every frame
+must be software-encoded on the ESP32 itself via `frame2jpg()` before
+reaching WiFi, a real CPU cost the OV2640-based 5fps figure never
+budgeted for.
+
+**Measured live** (`arduino/cam_node/cam_node.ino`, developer-run):
+`frame2jpg()` alone takes ~480–500ms/frame at VGA (~2fps) — well under
+the original 5fps target, confirmed by live testing, not assumed.
+
+**Decision: capture resolution changed to QVGA (320×240), not VGA.**
+At QVGA, `frame2jpg()` takes ~97–109ms/frame (~10fps), clearing the
+original 5fps target. This is not an arbitrary substitution — plan.md
+never actually required 5fps for its own sake; the real constraint is
+info.md §4.3's alert-latency budget (phone alert ≤30s block/≤15s
+target — the ≤10s buzzer bar is gas-path-only, unaffected by camera
+fps per §2.2's scope), and plan.md §6.1's TemporalVoter (5-of-8 votes)
+fills its window in ~4s even at 2fps, let alone ~10fps at QVGA — so
+the 5fps figure was a streaming/UX assumption inherited from the
+OV2640 plan, not itself load-bearing. QVGA also costs nothing at
+inference: `edge/vision.py`'s `_preprocess()` resizes every frame to
+224×224 regardless of source resolution.
+
+QVGA capture also exposed a second, unrelated bug — the GC2145 driver
+skips its widest field-of-view subsample ratio at QVGA and above,
+producing a fixed sensor-pixel-space crop. Root-caused and fixed via a
+runtime register poke in `cam_node.ino` (developer-confirmed live,
+FOV "good enough" though narrower than the MacBook webcam used through
+Phases 0–11) — see logs.md "Phase 13a — FPS measured, narrow-FOV bug
+root-caused and fixed" for full detail. Not an fps-related finding,
+noted here only because it surfaced during this same QVGA measurement
+session.
+
+**New practical streaming target: 320×240 (QVGA) @ ~10fps**, measured
+on real GC2145 hardware, superseding the VGA/5fps OV2640 assumption
+above.
+
+### 10.4 Connectivity — two switchable network contexts
+
+- **HOME:** ESP32 connects directly to home WiFi, simple
+  WPA2-Personal.
+- **COLLEGE:** college WiFi requires SAP ID + password via a captive
+  portal, which ESP32 firmware cannot handle directly (no browser/
+  portal interaction capability on a microcontroller). **Solution:**
+  the developer's laptop connects to and authenticates on college WiFi
+  normally (logging into the captive portal as usual), then shares
+  that connection via macOS Internet Sharing as a new, simple
+  WPA2-Personal hotspot. The ESP32 connects to **this shared hotspot**,
+  never touching the college network or its captive portal directly.
+- **WiFiManager** (standard ESP32/Arduino library) handles switching
+  between these two saved-network contexts via a reset-and-reconfigure
+  flow (temporary setup hotspot, web-based credential entry) — no
+  reflashing needed when moving between home and college.
+
+**Rejected alternatives, for the record:**
+- Mobile hotspot — viable fallback, but laptop-sharing is preferred
+  since it uses the real institutional network at college.
+- WPA2-Enterprise direct connection — technically possible via the
+  `esp_wpa2` library, but the college's captive portal specifically
+  (not just enterprise auth) makes direct connection infeasible
+  without IT-side MAC whitelisting, which was not pursued.
+
+### 10.5 No-WiFi fallback — decided
+
+A total WiFi outage means **no vision-based detection at all** — an
+explicit, disclosed architectural trade-off of cloud inference, stated
+plainly rather than hidden.
+
+**Mitigation, updated for the two-board split (§10.0a):** the plain
+ESP32 DevKit (sensor board) monitors MQ-2/MQ-135 readings locally,
+against hardcoded threshold values mirroring `fusion.py`'s calibrated
+warn/danger thresholds, and drives the buzzer **directly** from its
+own GPIO — entirely independent of WiFi/cloud and of the ESP32-CAM.
+Because gas sensing and vision now live on physically separate boards,
+this fallback has no dependency at all on the ESP32-CAM's WiFi/camera
+state — a stronger isolation than the original single-board plan,
+where sensors and camera would have shared one WiFi radio. This
+remains a genuine, disclosed degradation path (gas-only, local-only
+fallback), not a silent gap: the system degrades gracefully from
+"vision+gas fusion, cloud-verified" to "gas-only, local-only" rather
+than going fully silent.
+
+### 10.6 Data flow
+
+```
+ESP32-CAM (camera only)
+   --WiFi-->
+AWS Lambda (runs v4 ONNX model on each frame)
+
+Plain ESP32 DevKit (MQ-2 + MQ-135 + buzzer)
+   -- computes gas_high locally, drives buzzer directly, independent of WiFi --
+   --WiFi (if available)--> reports gas readings for fusion display
+
+Lambda's vision result + sensor board's gas_high, fused
+   -->
+FastAPI backend's NEW WebSocket endpoint (does not exist yet)
+   -->
+broadcast to connected React dashboard clients
+   -->
+rendered on a NEW "Live View" dashboard tab
+```
+
+Note: the exact mechanism by which the sensor board's gas readings
+reach the fusion/dashboard layer over WiFi (its own HTTP POST? read by
+the same backend that receives Lambda's callback?) is not yet decided
+— firmware for the sensor board has not been written. This is an open
+design item, not an oversight.
+
+### 10.7 Live View — new dashboard tab (not yet built)
+
+Real-time camera feed via WebSocket, with:
+
+- an AI classification badge overlaid (SAFE/WATCH/WARNING/CRITICAL,
+  reusing the existing fusion-level color language), **plus**
+- a live-updating `p_fire` confidence value/indicator shown alongside
+  the feed, so a viewer can watch confidence build toward an alarm in
+  real time, not just see a static badge flip.
+
+### 10.8 Remote access
+
+A natural consequence once the dashboard backend is actually
+**deployed** (not just localhost) — contingent on completing that
+deployment step (previously discussed, not yet executed), not
+additional engineering once deployed.
+
+### 10.9 Open design question — flagged for future discussion
+
+How does info.md §2.2's "local alarm before any network attempt"
+principle apply now that **vision** inference is inherently
+cloud-dependent? The gas-only local fallback (§10.5 above) is the
+current answer for connectivity loss specifically, but this deserves
+explicit discussion/confirmation before implementation begins — not a
+quiet assumption that it is fully resolved.
+
+**RESOLVED 2026-09-09** — see info.md §2.2 (scope clarification added
+directly to the principle's text). Resolution summary: the "local
+alarm before network" principle is scoped specifically to GAS-based
+detection (MQ-2/MQ-135), which remains fully local with zero network
+dependency; vision-based detection is explicitly disclosed as
+cloud-dependent by design (no local alternative was ever a candidate,
+per §10.2), so the gas-only fallback on WiFi loss (§10.5) is
+consistent with the principle, not a violation of it.
+
+### 10.10 Status
+
+**IN PROGRESS, updated 2026-09-16.** No Lambda function, WebSocket
+endpoint, or dashboard code for this phase has been built yet.
+
+**10.10a — ESP32-CAM (camera board):** flashed and confirmed working
+(2026-09-09, GPIO4 LED blink test via the MB shield programmer). No
+sensor wiring on this board. Camera streaming/Lambda integration
+itself not yet built.
+
+**10.10b — plain ESP32 DevKit (sensor board, added 2026-09-16):**
+wiring complete and confirmed working via Serial Monitor (§10.0a).
+Burn-in in progress, not yet stable. No firmware written yet — the
+board has only been read manually, not running a project sketch.
+Calibration (10-bit-vs-12-bit question) and the airflow false-positive
+mitigation are both open decisions, not yet made — see §10.0a and
+logs.md "Phase 13 — architecture change: two-board split".
 
 ---
 
