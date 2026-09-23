@@ -17,8 +17,11 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, StreamingResponse
 
 from agent.locate import find_nearest_fire_station
 
@@ -49,6 +52,44 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+# --- Stage 4 camera relay ---------------------------------------------
+# cam_node.ino's /stream serves exactly ONE client (its own source comment
+# says so), so the edge loop holding it locks the dashboard out of the
+# camera entirely. The relay holds that single upstream connection and
+# fans the newest frame out to every consumer.
+#
+# It runs HERE, in the backend, rather than in the edge loop, so Live View
+# works even when edge/main.py is stopped -- a dashboard that goes blank
+# whenever the detector restarts is not much of a dashboard. The edge loop
+# keeps opening the stream directly today; that is unchanged by this stage
+# and remains the detector's own business.
+sys.path.insert(0, str(_REPO_ROOT / "edge"))
+from camrelay import CameraRelay  # noqa: E402  (path must be set first)
+
+_CAM_URL = _CONFIG.get("camera", {}).get("stream_url", "")
+_relay: CameraRelay | None = None
+
+
+@app.on_event("startup")
+def _start_relay() -> None:
+    """Start relaying if a camera URL is configured. Never fatal: a
+    missing/unreachable camera degrades Live View, it must not stop the
+    rest of the dashboard API from serving."""
+    global _relay
+    if not _CAM_URL:
+        logger.info("no camera.stream_url configured — camera endpoints disabled")
+        return
+    _relay = CameraRelay(_CAM_URL)
+    _relay.start()
+    logger.info("camera relay started against %s", _CAM_URL)
+
+
+@app.on_event("shutdown")
+def _stop_relay() -> None:
+    if _relay is not None:
+        _relay.stop()
+
 
 _FEEDBACK_CSV = _REPO_ROOT / _CONFIG["agent"]["feedback_log"]
 _RESULTS_CSV = _REPO_ROOT / "eval/results.csv"
@@ -174,6 +215,65 @@ def live_sensors() -> dict[str, Any]:
         logger.warning("live-sensors read failed: %s", exc)
         return {"ok": False, "reason": str(exc), "readings": [], "thresholds": thresholds}
     return {"ok": True, "reason": None, "readings": readings, "thresholds": thresholds}
+
+
+@app.get("/api/camera/snapshot")
+def camera_snapshot() -> Response:
+    """The newest JPEG, verbatim — no decode, no re-encode.
+
+    Returns 503 rather than a stale image when the camera is not live:
+    a snapshot silently showing a minutes-old frame is worse than an
+    honest error, because the caller cannot tell the difference.
+    """
+    if _relay is None:
+        return Response(status_code=503, content=b"camera not configured")
+    jpeg, age = _relay.latest_jpeg()
+    if jpeg is None:
+        return Response(status_code=503, content=b"no frame received yet")
+    if not _relay.is_live():
+        return Response(status_code=503,
+                        content=f"stale frame ({age:.1f}s old)".encode())
+    return Response(content=jpeg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/camera/stream")
+def camera_stream() -> StreamingResponse:
+    """MJPEG fan-out: the same multipart format cam_node.ino serves, so
+    a plain <img src> works exactly as it does against the board.
+
+    Every client that hits this endpoint is served from the relay's slot,
+    so any number of viewers cost the board exactly one connection.
+    """
+
+    def generate():
+        # wait_for_frame() blocks until the NEXT frame, so this emits at
+        # the upstream rate without polling (CPU) or repeating frames.
+        while True:
+            jpeg = _relay.wait_for_frame(timeout=5.0) if _relay else None
+            if jpeg is None:
+                # Upstream is down. End the response rather than hanging:
+                # the browser's <img> will retry, and a stalled forever
+                # connection would leak a thread per viewer.
+                return
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
+                   + jpeg + b"\r\n")
+
+    if _relay is None:
+        return Response(status_code=503, content=b"camera not configured")
+    return StreamingResponse(
+        generate(), media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/camera/status")
+def camera_status() -> dict[str, Any]:
+    """Relay diagnostics — whether frames are arriving, and how old."""
+    if _relay is None:
+        return {"configured": False, "live": False,
+                "reason": "camera.stream_url not set in config.yaml"}
+    return {"configured": True, **_relay.stats()}
 
 
 @app.get("/health")

@@ -97,6 +97,7 @@ WiFiServer server(80);
 // degradation, so the wait is now bounded and reconnection is retried
 // on a fixed interval with a serial line each time.
 static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;  // matches sensor_esp32_node.ino
+static const int WIFI_CONNECT_PASSES = 3;                   // full passes over WIFI_NETWORKS before giving up (hotspots often refuse the first attempt)
 static const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;    // between reconnect attempts in loop()
 static const unsigned long REQUEST_READ_TIMEOUT_MS = 1000;   // cap on reading the HTTP request line
 static const unsigned int MAX_REQUEST_LINE_LEN = 512;        // reject longer request lines outright
@@ -127,7 +128,11 @@ static bool ensureWifi() {
   if (now - lastWifiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
     lastWifiRetryMs = now;
     WiFi.disconnect();
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    // Cycle networks on reconnect as well, so a board that boots at home
+    // and is carried to a hotspot recovers without a reflash.
+    static int retryIndex = 0;
+    WiFi.begin(WIFI_NETWORKS[retryIndex].ssid, WIFI_NETWORKS[retryIndex].password);
+    retryIndex = (retryIndex + 1) % WIFI_NETWORK_COUNT;
   }
   return false;
 }
@@ -447,12 +452,29 @@ void setup() {
   // watching. Matches sensor_esp32_node.ino's 15s bound and its
   // explicit "say so and carry on" behaviour; ensureWifi() in loop()
   // keeps retrying, so a failure here is a delay, not a dead board.
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Try each registered network in turn (2026-09-23): this board moves
+  // between home WiFi and a phone hotspot, and a camera that only knows
+  // one network is useless at a demo venue.
+  // Several PASSES over the network list, not one. A phone hotspot
+  // frequently refuses the first association attempt -- especially when
+  // another board has just joined -- and a single pass would then fall
+  // through to home WiFi and stay there, stranding this board on a
+  // different network from the laptop (observed 2026-09-23). Retrying
+  // the preferred network a few times costs only boot delay.
   Serial.print("Connecting to WiFi");
-  unsigned long wifiStartMs = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStartMs < WIFI_CONNECT_TIMEOUT_MS) {
-    delay(500);
-    Serial.print(".");
+  for (int pass = 0; pass < WIFI_CONNECT_PASSES && WiFi.status() != WL_CONNECTED; pass++) {
+    for (int n = 0; n < WIFI_NETWORK_COUNT && WiFi.status() != WL_CONNECTED; n++) {
+      Serial.print(" ["); Serial.print(WIFI_NETWORKS[n].ssid);
+      Serial.print(" pass"); Serial.print(pass + 1); Serial.print("]");
+      WiFi.disconnect();
+      delay(300);  // let the radio settle before re-associating
+      WiFi.begin(WIFI_NETWORKS[n].ssid, WIFI_NETWORKS[n].password);
+      unsigned long wifiStartMs = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - wifiStartMs < WIFI_CONNECT_TIMEOUT_MS) {
+        delay(500);
+        Serial.print(".");
+      }
+    }
   }
   Serial.println();
   if (WiFi.status() == WL_CONNECTED) {
