@@ -67,21 +67,36 @@
 //   All raw readings logged before either 2026-09-17 rewire remain
 //   void for calibration purposes -- see logs.md/context.md.
 //
-// WiFi: connects only, reusing arduino/cam_node.ino's HOME-network
-// pattern/style for consistency (credentials + WiFi.begin() + Serial
-// IP printout). Deliberately NO MQTT / publish-subscribe / payload
-// structure here -- plan.md §10.6 explicitly leaves the transport by
-// which this board's gas readings reach the fusion/dashboard layer as
-// an undecided open design item for Phase 13f. This board is WiFi-
-// reachable ahead of that decision, but transmits no data yet, by
-// design.
+// WiFi: connects AND transmits since Stage 3 (2026-09-23). Reuses
+// arduino/cam_node.ino's HOME-network pattern/style for consistency
+// (credentials + WiFi.begin() + Serial IP printout) and its
+// non-blocking ensureWifi() reconnect discipline.
+//
+// TRANSPORT DECISION (resolves plan.md §10.6 / Phase 13f): a plain
+// 1 Hz HTTP POST of one JSON reading to the machine running
+// edge/main.py. NOT MQTT -- no broker to run or depend on, and the
+// consumer is a single known host. The endpoint lives inside the EDGE
+// LOOP, not the dashboard backend, so the detector never depends on an
+// optional dev-time process (see edge/wifi_source.py's docstring).
+//
+// Serial output is UNCHANGED and remains the primary/fallback path:
+// eval/verify_live.py, tools/calibrate_sensors.py and edge/sensors.py
+// all parse those exact lines. WiFi is an ADDITION, not a replacement,
+// at the firmware level -- the host chooses which one it reads via
+// config.yaml sensors.transport.
 //
 // Buzzer path is local-only and WiFi-independent (plan.md §10.5's
 // no-WiFi gas-only fallback, info.md's local-alarm-before-network
 // principle): it must keep working whether WiFi is mid-connect,
 // dropped, or never configured. It is never gated on WiFi.status().
+// Stage 3 preserves this absolutely: the POST happens at the very END
+// of loop(), strictly AFTER the buzzer write, with a short timeout and
+// no retry, and its return value is never consulted by any control
+// flow. A dead network costs this board nothing but a logged warning.
 
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <ESPmDNS.h>
 
 // ---------------------------------------------------------------------
 // Pin map
@@ -97,6 +112,41 @@ static const int BUZZER_PIN = 33;  // digital out
 // used a 1 Hz (1000ms) sample loop structurally; reused here as the
 // cadence, since nothing about the ADC bit-depth change affects timing.
 static const unsigned long SAMPLE_INTERVAL_MS = 1000;
+
+// ---------------------------------------------------------------------
+// Stage 3 WiFi transport (2026-09-23)
+//
+// Every number here is bounded so the POST can never threaten the 1 Hz
+// sample cadence or the buzzer. Worst case per loop() iteration is
+// HTTP_TIMEOUT_MS, which is deliberately well under SAMPLE_INTERVAL_MS:
+// even a totally unresponsive host costs at most 400ms of a 1000ms
+// budget, so sampling stays on time and the buzzer (written earlier in
+// the same iteration) is already latched before any of this runs.
+// ---------------------------------------------------------------------
+static const unsigned long HTTP_TIMEOUT_MS = 400;          // hard cap on one POST; << SAMPLE_INTERVAL_MS by design
+static const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;  // backoff between reconnect attempts (matches cam_node.ino)
+static const unsigned long POST_FAIL_LOG_INTERVAL_MS = 30000;
+static const unsigned long WIFI_PER_NETWORK_TIMEOUT_MS = 15000;  // per-network wait in setup(); total boot delay is bounded by this * WIFI_SETUP_ATTEMPTS
+static const int WIFI_SETUP_ATTEMPTS = 3;
+static const int SUBNET_SCAN_MAX = 20;              // how many host addresses to probe; a hotspot rarely has more than a handful of clients
+static const int SUBNET_SCAN_TIMEOUT_MS = 120;      // per-host TCP connect timeout; 20 * 120ms = 2.4s worst case, paid once at connect, never per POST                       // connect tries at boot before giving up and running gas-only (loop() keeps retrying forever)  // rate-limit failure logging so a long outage cannot flood serial at 1Hz
+
+bool wifiWasConnected = false;
+unsigned long lastWifiRetryMs = 0;
+int wifiNetworkIndex = 0;
+
+// Forward declarations: setup() calls both of these, and it appears
+// earlier in this file than their definitions. The Arduino IDE
+// auto-generates prototypes, but arduino-cli/PlatformIO builds and any
+// plain C++ toolchain do not reliably, so they are explicit here.
+static void beginNextWifiNetwork();
+static void resolveIngestUrl();          // which entry of WIFI_NETWORKS we are trying
+// Resolved ingest base URL ("http://host:port/path"). Built once per
+// connection rather than per POST: mDNS resolution is a network round
+// trip and doing it at 1Hz would be wasteful and slow.
+String ingestUrl = "";
+unsigned long lastPostFailLogMs = 0;
+unsigned long postFailCount = 0;
 
 // ---------------------------------------------------------------------
 // *** WARMUP GATE — SLOPE-BASED, not fixed wall-clock (changed
@@ -664,24 +714,57 @@ void setup() {
   Serial.println("FireWatch Phase 13b sensor board -- MEASUREMENT FOUNDATION FIXED, PENDING CALIBRATION (relative per-boot baseline design)");
   Serial.println("NOTE: slope-based warmup gate calibrated 2026-09-20 (MQ2_MQ135_WARMUP_SLOPE_THRESHOLD=12) -- warmup should typically clear well under the 1-hour backstop; see [WARMUP_STABLE]/[WARMUP_BACKSTOP] log line for which path fired this boot.");
 
-  // WiFi: connect + confirm only, mirroring cam_node.ino. This never
-  // blocks or gates the buzzer logic in loop() below -- buzzer safety
-  // path does not depend on this succeeding.
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to WiFi");
-  unsigned long wifiStartMs = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStartMs < 15000) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Connected, IP: ");
+  // WiFi: connect + confirm only. This never blocks or gates the buzzer
+  // logic in loop() below -- the buzzer safety path does not depend on
+  // this succeeding (plan.md 10.5's no-WiFi gas-only fallback).
+  //
+  // Tries each registered network in turn, up to WIFI_SETUP_ATTEMPTS
+  // cycles. A board carried to a venue where the home network is absent
+  // must still reach the phone hotspot without a reflash -- that is the
+  // entire reason WIFI_NETWORKS is a list.
+  Serial.print("Connecting to WiFi (");
+  Serial.print(WIFI_NETWORK_COUNT);
+  Serial.println(" network(s) registered)");
+  // Try each network and KEEP GOING until one both connects AND has the
+  // ingest host on it. Connecting is not success: the board will happily
+  // join home WiFi while the laptop is on a phone hotspot, and then no
+  // POST can ever land. Observed exactly that on 2026-09-23 -- the board
+  // sat on Airtel_BeOnMind (192.168.1.11) while the host was on
+  // 172.20.10.2. So the host being FINDABLE is the real success test.
+  for (int attempt = 0; attempt < WIFI_SETUP_ATTEMPTS * WIFI_NETWORK_COUNT; attempt++) {
+    beginNextWifiNetwork();
+    unsigned long wifiStartMs = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - wifiStartMs < WIFI_PER_NETWORK_TIMEOUT_MS) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println();
+    if (WiFi.status() != WL_CONNECTED) continue;
+
+    Serial.print("Connected to ");
+    Serial.print(WiFi.SSID());
+    Serial.print(", IP: ");
     Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("WiFi not connected -- continuing gas-only/local-only (plan.md 10.5)");
+    MDNS.begin("firewatch-sensor");
+    resolveIngestUrl();
+    if (ingestUrl.length() > 0) break;   // host found on this network: done
+
+    Serial.print("[WIFI_NO_HOST] ingest host not found on ");
+    Serial.print(WiFi.SSID());
+    Serial.println(" -- trying the next registered network");
+    WiFi.disconnect();
   }
-  Serial.println("NOTE: WiFi connectivity only -- no data transmitted yet, by design (Phase 13f open item).");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (ingestUrl.length() > 0) {
+      Serial.println("Transport: 1Hz JSON POST (serial output below is UNCHANGED and remains the fallback path -- the host picks a transport via config.yaml sensors.transport)");
+    } else {
+      Serial.println("[TRANSPORT_OFF] connected, but no ingest host found on any registered network -- serial only. Detection and buzzer fully functional.");
+    }
+  } else {
+    Serial.println("WiFi not connected -- continuing gas-only/local-only (plan.md 10.5). Detection and buzzer are FULLY functional; only telemetry is affected.");
+  }
+  wifiWasConnected = (WiFi.status() == WL_CONNECTED);
 }
 
 // Takes `samples` consecutive analogRead()s on `pin`, spaced
@@ -923,6 +1006,226 @@ void recordVoteAndCheck(bool mq2Exceeded, bool mq135Exceeded,
   *mq135Alarm = (mq135Votes >= VOTE_THRESHOLD_N_PLACEHOLDER);
 }
 
+// ---------------------------------------------------------------------
+// Try ONE network from WIFI_NETWORKS, advancing the index each call.
+//
+// Round-robin rather than "always retry [0]": if the home network is out
+// of range (a demo venue), insisting on it forever would never reach the
+// hotspot entry. Each call advances, so a full cycle covers every
+// registered network.
+// ---------------------------------------------------------------------
+static void beginNextWifiNetwork() {
+  if (WIFI_NETWORK_COUNT <= 0) return;
+  const WifiNetwork &net = WIFI_NETWORKS[wifiNetworkIndex];
+  Serial.print("[WIFI_TRY] ");
+  Serial.println(net.ssid);
+  WiFi.disconnect();
+  WiFi.begin(net.ssid, net.password);
+  wifiNetworkIndex = (wifiNetworkIndex + 1) % WIFI_NETWORK_COUNT;
+}
+
+// ---------------------------------------------------------------------
+// Resolve the ingest endpoint ONCE per connection.
+//
+// Tries INGEST_HOST (an mDNS ".local" name) first, because a hostname
+// survives the laptop having a different IP on every network -- which is
+// the whole reason this exists: switching between home WiFi and a phone
+// hotspot must not require a reflash. Falls back to
+// INGEST_FALLBACK_IP if mDNS does not resolve (some hotspots do not
+// forward it).
+// ---------------------------------------------------------------------
+static void resolveIngestUrl() {
+  ingestUrl = "";
+  if (INGEST_HOST != NULL && strlen(INGEST_HOST) > 0) {
+    // MDNS.queryHost() wants the bare name, without the ".local" suffix.
+    String host(INGEST_HOST);
+    int dot = host.indexOf(".local");
+    String bare = (dot > 0) ? host.substring(0, dot) : host;
+    IPAddress resolved = MDNS.queryHost(bare.c_str(), 2000);
+    if (resolved != IPAddress((uint32_t)0)) {
+      ingestUrl = "http://" + resolved.toString() + ":" + String(INGEST_PORT) + String(INGEST_PATH);
+      Serial.print("[INGEST_RESOLVED] ");
+      Serial.print(INGEST_HOST);
+      Serial.print(" -> ");
+      Serial.println(ingestUrl);
+      return;
+    }
+    Serial.print("[INGEST_MDNS_FAIL] could not resolve ");
+    Serial.println(INGEST_HOST);
+  }
+  // Fallback 1: a literal IP, if one is configured AND it is on the
+  // subnet we actually joined. A hardcoded IP from a different network
+  // (e.g. the home 192.168.1.x while connected to a 172.20.10.x phone
+  // hotspot) is worse than useless -- it guarantees every POST fails --
+  // so it is only used when the first three octets match ours.
+  if (INGEST_FALLBACK_IP != NULL && strlen(INGEST_FALLBACK_IP) > 0) {
+    IPAddress fb;
+    if (fb.fromString(INGEST_FALLBACK_IP)) {
+      IPAddress me = WiFi.localIP();
+      if (fb[0] == me[0] && fb[1] == me[1] && fb[2] == me[2]) {
+        ingestUrl = "http://" + fb.toString() + ":" + String(INGEST_PORT) + String(INGEST_PATH);
+        Serial.print("[INGEST_FALLBACK] using configured IP ");
+        Serial.println(ingestUrl);
+        return;
+      }
+      Serial.print("[INGEST_FALLBACK_SKIP] configured IP ");
+      Serial.print(INGEST_FALLBACK_IP);
+      Serial.print(" is not on this subnet (we are ");
+      Serial.print(me);
+      Serial.println(") -- trying gateway scan instead");
+    }
+  }
+
+  // Fallback 2: SCAN THE SUBNET for a host answering on INGEST_PORT.
+  //
+  // This is what makes a phone hotspot work with no reflash. On a
+  // hotspot the laptop's IP is assigned by the phone and differs every
+  // session (iOS hands out 172.20.10.x), so neither a hardcoded IP nor
+  // -- on many Android/iOS builds, which do not forward mDNS -- a
+  // hostname can find it. A hotspot subnet is tiny and the laptop is
+  // almost always the first client, so a bounded scan finds it in well
+  // under a second.
+  //
+  // Bounded deliberately: SUBNET_SCAN_MAX hosts, SUBNET_SCAN_TIMEOUT_MS
+  // each, and ONLY at (re)connect time -- never per-POST. Worst case is
+  // a one-off delay at connection, not a per-loop cost.
+  {
+    IPAddress me = WiFi.localIP();
+    IPAddress gw = WiFi.gatewayIP();
+    Serial.print("[INGEST_SCAN] searching ");
+    Serial.print(me[0]); Serial.print("."); Serial.print(me[1]); Serial.print(".");
+    Serial.print(me[2]); Serial.print(".1-"); Serial.print(SUBNET_SCAN_MAX);
+    Serial.print(" for a host on port "); Serial.println(INGEST_PORT);
+    for (int host = 1; host <= SUBNET_SCAN_MAX; host++) {
+      if (host == me[3]) continue;                 // that's us
+      if (host == gw[3]) continue;                 // that's the router/phone
+      IPAddress cand(me[0], me[1], me[2], host);
+      WiFiClient probe;
+      if (probe.connect(cand, INGEST_PORT, SUBNET_SCAN_TIMEOUT_MS)) {
+        probe.stop();
+        ingestUrl = "http://" + cand.toString() + ":" + String(INGEST_PORT) + String(INGEST_PATH);
+        Serial.print("[INGEST_FOUND] ");
+        Serial.println(ingestUrl);
+        return;
+      }
+      probe.stop();
+    }
+    Serial.println("[INGEST_SCAN_FAIL] no host answering on this subnet -- is edge/main.py running with sensors.transport: wifi, and is the laptop on THIS network?");
+  }
+
+  Serial.println("[INGEST_DISABLED] endpoint unresolved -- telemetry off, gas detection and buzzer unaffected");
+}
+
+// ---------------------------------------------------------------------
+// Non-blocking WiFi keepalive. Copied in spirit from cam_node.ino:111 --
+// same board family, same network, same failure modes, so the same
+// pattern rather than a second invented one.
+//
+// NEVER blocks: a disconnected board retries at most once per
+// WIFI_RETRY_INTERVAL_MS and returns false immediately the rest of the
+// time. loop() therefore runs at full 1 Hz whether WiFi is up or not.
+// ---------------------------------------------------------------------
+static bool ensureWifi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiWasConnected) {
+      wifiWasConnected = true;
+      Serial.print("[WIFI_RESTORED] reconnected, SSID: ");
+      Serial.print(WiFi.SSID());
+      Serial.print(", IP: ");
+      Serial.println(WiFi.localIP());
+      // A new connection may be a DIFFERENT network with a different
+      // laptop IP, so the endpoint is re-resolved rather than reused.
+      MDNS.begin("firewatch-sensor");
+      resolveIngestUrl();
+    }
+    return true;
+  }
+
+  if (wifiWasConnected) {
+    wifiWasConnected = false;
+    Serial.println("[WIFI_LOST] connection dropped -- retrying. Gas detection and buzzer are UNAFFECTED (local-only); only telemetry to the edge loop stops.");
+  }
+
+  unsigned long now = millis();
+  if (now - lastWifiRetryMs >= WIFI_RETRY_INTERVAL_MS) {
+    lastWifiRetryMs = now;
+    beginNextWifiNetwork();  // cycles through every registered network
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------
+// POST one reading as JSON to the edge loop. Fire-and-forget.
+//
+// SAFETY CONTRACT -- this function may not affect anything else:
+//   * called at the very END of loop(), after the buzzer is already set
+//   * bounded by HTTP_TIMEOUT_MS (<< SAMPLE_INTERVAL_MS)
+//   * no retry (the next reading is 1s away and more current anyway --
+//     retrying stale data would be worse than dropping it)
+//   * return value deliberately ignored by the caller
+//   * failures are rate-limited to one log per POST_FAIL_LOG_INTERVAL_MS
+//     so a long outage cannot flood the serial line that
+//     eval/verify_live.py and edge/sensors.py are parsing
+//
+// `state` is the same string the serial line prints, and the six
+// threshold fields are the same values -- one source of truth for both
+// transports. warn/danger arrive as PARAMETERS because they are locals
+// computed inside loop() (not globals like the tracked baselines), so
+// they must be passed in rather than reached for. Sending -1 baselines pre-capture is avoided by simply
+// omitting thresholds when they are not yet valid: edge/wifi_source.py
+// ignores a partial threshold set rather than half-applying it.
+// ---------------------------------------------------------------------
+static void postReading(int mq2Raw, int mq135Raw, const char *state,
+                        bool includeThresholds,
+                        float warnMq2, float dangerMq2,
+                        float warnMq135, float dangerMq135) {
+  if (!ensureWifi()) return;              // no link; nothing to do
+  if (ingestUrl.length() == 0) return;    // endpoint unresolved/disabled
+
+  char body[320];
+  if (includeThresholds) {
+    snprintf(body, sizeof(body),
+             "{\"mq2\":%d,\"mq135\":%d,\"state\":\"%s\","
+             "\"baseline_mq2\":%.2f,\"warn_mq2\":%.2f,\"danger_mq2\":%.2f,"
+             "\"baseline_mq135\":%.2f,\"warn_mq135\":%.2f,\"danger_mq135\":%.2f}",
+             mq2Raw, mq135Raw, state,
+             mq2TrackedBaseline, warnMq2, dangerMq2,
+             mq135TrackedBaseline, warnMq135, dangerMq135);
+  } else {
+    snprintf(body, sizeof(body), "{\"mq2\":%d,\"mq135\":%d,\"state\":\"%s\"}",
+             mq2Raw, mq135Raw, state);
+  }
+
+  HTTPClient http;
+  http.setConnectTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(ingestUrl)) {
+    http.end();
+    return;
+  }
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST((uint8_t *)body, strlen(body));
+  http.end();
+
+  if (code != 200) {
+    postFailCount++;
+    unsigned long now = millis();
+    if (now - lastPostFailLogMs >= POST_FAIL_LOG_INTERVAL_MS || lastPostFailLogMs == 0) {
+      lastPostFailLogMs = now;
+      Serial.print("[POST_FAIL] ingest POST failing (HTTP ");
+      Serial.print(code);
+      Serial.print(", ");
+      Serial.print(postFailCount);
+      Serial.println(" total) -- gas detection and buzzer UNAFFECTED; check that edge/main.py runs with sensors.transport: wifi, and that the laptop is on THIS network (campus WiFi often blocks device-to-device traffic -- use a phone hotspot)");
+    }
+  } else if (postFailCount > 0) {
+    Serial.print("[POST_OK] ingest POST recovered after ");
+    Serial.print(postFailCount);
+    Serial.println(" failures");
+    postFailCount = 0;
+  }
+}
+
 void loop() {
   unsigned long now = millis();
   if (now - lastSampleMs < SAMPLE_INTERVAL_MS) return;
@@ -982,6 +1285,10 @@ void loop() {
 
   if (!warmupNowElapsed) {
     Serial.println(",WARMUP");
+    // Telemetry during warmup too: the host shows "board warming up"
+    // rather than "no sensor" (edge/main.py surfaces WARMUP as GATED).
+    // No thresholds yet -- none exist before baseline capture.
+    postReading(mq2Raw, mq135Raw, "WARMUP", false, 0, 0, 0, 0);
     return;  // readings not trusted yet -- no capture, no voting, no buzzer during warmup
   }
 
@@ -995,6 +1302,7 @@ void loop() {
       captureCount++;
     }
     Serial.println(",BASELINE_CAPTURE");
+    postReading(mq2Raw, mq135Raw, "BASELINE_CAPTURE", false, 0, 0, 0, 0);
 
     if (baselineCaptureElapsed() && captureCount > 0) {
       int mq2Median = medianOf(mq2CaptureBuffer, captureCount);
@@ -1155,6 +1463,13 @@ void loop() {
   Serial.print(",danger_mq135=");
   Serial.println(mq135Danger);
 
-  // Data transport (WiFi POST/other) intentionally NOT implemented --
-  // Phase 13f open item, plan.md §10.6.
+  // --- Stage 3 transport: LAST thing in loop(), after the buzzer -----
+  // Everything above (sampling, voting, baseline tracking, buzzer) has
+  // already happened and is unaffected by whatever occurs here. This is
+  // the literal embodiment of info.md's local-alarm-before-network
+  // principle at the firmware level.
+  const char *stateStr = gasHigh ? "GAS_HIGH"
+                                 : (baselineTroubleActive ? "ok(BASELINE_TROUBLE)" : "ok");
+  postReading(mq2Raw, mq135Raw, stateStr, true,
+              mq2Warn, mq2Danger, mq135Warn, mq135Danger);
 }

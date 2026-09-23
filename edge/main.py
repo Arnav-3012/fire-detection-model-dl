@@ -59,6 +59,7 @@ from camera import Camera
 from fusion import Level, compute_gas_high, fuse, load_gas_thresholds, temp_spiking
 from livelog import LiveLogWriter
 from sensors import SensorReader
+from wifi_source import WifiSensorSource
 from vision import VisionModel
 
 # Reporting cadence only — affects nothing about detection (see Phase 4).
@@ -160,12 +161,28 @@ def main() -> None:
     camera = Camera(args.video_source) if args.video_source else Camera()
     model = VisionModel()
     thresholds = load_gas_thresholds()
-    reader = SensorReader()
-    reader.start()  # never raises; a dead port degrades to None readings
+    # Transport is a config flag, not a code path (Stage 3): both sources
+    # expose the identical surface, so everything below this line is
+    # transport-agnostic. Serial stays selectable as the bring-up fallback.
+    transport = str(config["sensors"].get("transport", "serial")).lower()
+    if transport == "wifi":
+        reader = WifiSensorSource()
+    elif transport == "serial":
+        reader = SensorReader()
+    else:
+        # Unknown value: fail loudly to serial rather than guessing. A typo
+        # here must not silently leave the detector with no gas input.
+        print(
+            f"WARNING: unknown sensors.transport {transport!r} — expected "
+            f"'serial' or 'wifi'. Falling back to serial."
+        )
+        reader = SensorReader()
+    reader.start()  # never raises; a dead transport degrades to None readings
     live_log = LiveLogWriter()
     live_log.start()  # dashboard live-view only; all file I/O on its own thread
 
     print("FireWatch edge loop v3 (fusion + local alarm) running. Ctrl+C to stop.")
+    print(f"Sensor transport: {transport.upper()}")
     print(
         "Gas verdict: FIRMWARE state field is authoritative (board owns baseline, "
         "ratio math and buzzer)."
@@ -201,6 +218,12 @@ def main() -> None:
             frame = camera.read()
             result = model.predict_smoothed(frame)
             readings = reader.latest()
+            # WiFi transport only: latch a one-time warning when POSTs stop.
+            # No-op on serial (which signals a dead board via the port) and
+            # cheap enough for 30 FPS — the latch is inside the lock.
+            note_stale = getattr(reader, "note_stale_once", None)
+            if note_stale is not None:
+                note_stale()
 
             # --- gas signal, warm-up gated -------------------------------
             # Three states: no data yet (sensor absent/booting -> gas_high
