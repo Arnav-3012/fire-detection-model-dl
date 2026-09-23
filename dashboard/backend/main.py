@@ -9,6 +9,7 @@ This process is a second, independent FastAPI app from agent/server.py
 Run from the repo root:  uvicorn dashboard.backend.main:app --port 8001
 """
 
+import asyncio
 import csv
 import json
 import logging
@@ -19,7 +20,7 @@ import yaml
 from dotenv import load_dotenv
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
@@ -90,6 +91,10 @@ def _stop_relay() -> None:
     if _relay is not None:
         _relay.stop()
 
+
+# Matches the board's own 1 Hz sample rate — pushing faster would only
+# resend identical data.
+WS_PUSH_INTERVAL_SECONDS = 1.0
 
 _FEEDBACK_CSV = _REPO_ROOT / _CONFIG["agent"]["feedback_log"]
 _RESULTS_CSV = _REPO_ROOT / "eval/results.csv"
@@ -188,6 +193,72 @@ def fire_station() -> dict[str, Any]:
     return result
 
 
+def _live_sensors_payload() -> dict[str, Any]:
+    """The live-sensors payload, shared by the REST endpoint and the
+    WebSocket below.
+
+    One builder, deliberately: Stage 5's whole premise is that the WS
+    payload is IDENTICAL to /api/live-sensors, so LiveSensorChart.jsx
+    drops in unchanged and falling back to polling is a one-line change.
+    Two separate builders would drift the first time either changed.
+
+    Thresholds prefer the FIRMWARE-published values the board now sends
+    (Stage 3) over config.yaml's, which are stale August 10-bit
+    Arduino-era numbers — see config.yaml's sensors block. Falls back to
+    config when the board has not published any yet (still warming up,
+    or legacy firmware).
+    """
+    sensors_cfg = _CONFIG["sensors"]
+    thresholds = {
+        k: sensors_cfg[k]
+        for k in (
+            "mq2_baseline", "mq2_warn", "mq2_danger",
+            "mq135_baseline", "mq135_warn", "mq135_danger",
+        )
+    }
+    # The firmware names its fields warn_mq2 / baseline_mq135 / ...,
+    # while the dashboard's contract (and config.yaml) uses mq2_warn /
+    # mq135_baseline / ... . Mapping is REQUIRED, not cosmetic: merging
+    # the raw firmware dict would ADD six new keys while leaving the six
+    # stale config keys in place, and the chart — which reads the config
+    # names — would keep drawing the stale lines while looking updated.
+    live = _read_firmware_thresholds()
+    for sensor in ("mq2", "mq135"):
+        for field in ("baseline", "warn", "danger"):
+            firmware_key = f"{field}_{sensor}"
+            config_key = f"{sensor}_{field}"
+            if firmware_key in live:
+                thresholds[config_key] = live[firmware_key]
+
+    if not _LIVE_LOG_PATH.exists():
+        return {"ok": False, "reason": "no live data yet — is edge/main.py running?",
+                "readings": [], "thresholds": thresholds}
+    try:
+        readings = json.loads(_LIVE_LOG_PATH.read_text())
+    except (OSError, ValueError) as exc:
+        logger.warning("live-sensors read failed: %s", exc)
+        return {"ok": False, "reason": str(exc), "readings": [], "thresholds": thresholds}
+    return {"ok": True, "reason": None, "readings": readings, "thresholds": thresholds}
+
+
+def _read_firmware_thresholds() -> dict[str, float]:
+    """The six live thresholds the board publishes, if the edge loop has
+    written them. Empty when unavailable — callers fall back to config.
+
+    Read from the live-log sidecar rather than reaching into the edge
+    loop: this backend is a separate process and must stay decoupled
+    from it (it may not even be running).
+    """
+    path = _LIVE_LOG_PATH.with_name(_LIVE_LOG_PATH.stem + "_thresholds.json")
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: float(v) for k, v in data.items() if isinstance(v, (int, float))}
+
+
 @app.get("/api/live-sensors")
 def live_sensors() -> dict[str, Any]:
     """The 1 Hz rolling live-readings buffer edge/main.py maintains
@@ -198,23 +269,39 @@ def live_sensors() -> dict[str, Any]:
     a partial JSON document. Missing file = edge loop not running (or not
     yet sampling): an expected state, not an error.
     """
-    sensors_cfg = _CONFIG["sensors"]
-    thresholds = {
-        k: sensors_cfg[k]
-        for k in (
-            "mq2_baseline", "mq2_warn", "mq2_danger",
-            "mq135_baseline", "mq135_warn", "mq135_danger",
-        )
-    }
-    if not _LIVE_LOG_PATH.exists():
-        return {"ok": False, "reason": "no live data yet — is edge/main.py running?",
-                "readings": [], "thresholds": thresholds}
+    return _live_sensors_payload()
+
+
+@app.websocket("/ws/live")
+async def ws_live(websocket: WebSocket) -> None:
+    """Push the live-sensors payload at 1 Hz.
+
+    Payload is byte-identical to GET /api/live-sensors (both call
+    _live_sensors_payload), so the frontend chart component is unchanged
+    and falling back to polling is a one-line swap.
+
+    1 Hz because that is the rate the data actually changes — the board
+    samples once per second (sensor_esp32_node.ino SAMPLE_INTERVAL_MS),
+    so pushing faster would send duplicate frames.
+
+    Sends immediately on connect rather than waiting a full second: a
+    freshly-opened tab should draw at once, not sit blank.
+
+    CORS note: the WebSocket handshake bypasses CORSMiddleware entirely,
+    so no CORS changes are needed for this endpoint.
+    """
+    await websocket.accept()
     try:
-        readings = json.loads(_LIVE_LOG_PATH.read_text())
-    except (OSError, ValueError) as exc:
-        logger.warning("live-sensors read failed: %s", exc)
-        return {"ok": False, "reason": str(exc), "readings": [], "thresholds": thresholds}
-    return {"ok": True, "reason": None, "readings": readings, "thresholds": thresholds}
+        while True:
+            await websocket.send_json(_live_sensors_payload())
+            await asyncio.sleep(WS_PUSH_INTERVAL_SECONDS)
+    except WebSocketDisconnect:
+        pass
+    except (OSError, RuntimeError) as exc:
+        # A client vanishing mid-send surfaces as a transport error, not
+        # always WebSocketDisconnect. Log once and let the task end —
+        # this must never take the app down.
+        logger.info("live websocket closed: %s", exc)
 
 
 @app.get("/api/camera/snapshot")

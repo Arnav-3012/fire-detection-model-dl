@@ -49,7 +49,10 @@ vision.py are untouched.
 
 import argparse
 import base64
+import json
+import os
 import time
+from pathlib import Path
 
 import cv2
 import requests
@@ -132,6 +135,29 @@ def format_status(
     )
 
 
+def _publish_thresholds(live_log_path: Path, thresholds: dict[str, float]) -> None:
+    """Write the firmware's live thresholds beside the live-log file.
+
+    Atomic replace (write .tmp, os.replace) for the same reason
+    livelog.py does it: the dashboard polls this file and must never read
+    a half-written document.
+
+    Failure contract (info.md 3.2): a write problem logs one warning and
+    the loop continues. This is dashboard cosmetics — it may never
+    interrupt detection.
+    """
+    path = live_log_path.with_name(live_log_path.stem + "_thresholds.json")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(thresholds))
+        os.replace(tmp, path)
+        print(f"Published firmware thresholds to {path} ({thresholds})")
+    except OSError as exc:
+        print(f"WARNING: could not publish firmware thresholds ({exc}); "
+              f"dashboard will fall back to config.yaml values")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="FireWatch edge loop")
     parser.add_argument(
@@ -158,7 +184,28 @@ def main() -> None:
     # camera failure = loud error + exit, per edge/camera.py. --video-source
     # swaps only where frames come from (phase13a-2); everything downstream
     # (vision, fusion, alarm) is identical either way.
-    camera = Camera(args.video_source) if args.video_source else Camera()
+    # Frame source, in precedence order:
+    #   1. --video-source (explicit override, e.g. a test clip)
+    #   2. config camera.edge_source — normally the Stage 4 RELAY, so this
+    #      loop and the dashboard can both see the ESP32-CAM. Connecting to
+    #      the board directly would take its single client slot and lock
+    #      the dashboard out (cam_node.ino serves one client at a time).
+    #   3. the laptop webcam, for development without the camera board.
+    # Falling back to the webcam SILENTLY would be the wrong default in a
+    # deployed system -- the dashboard would show fusion levels derived
+    # from a laptop camera pointed at a desk, which looks like it is
+    # working. So the chosen source is always announced.
+    configured_source = str(config.get("camera", {}).get("edge_source", "") or "")
+    video_source = args.video_source or configured_source
+    if video_source:
+        print(f"Video source: {video_source}")
+    else:
+        print(
+            "Video source: LAPTOP WEBCAM (camera.edge_source unset and no "
+            "--video-source). Vision detection is watching this laptop's "
+            "camera, NOT the ESP32-CAM."
+        )
+    camera = Camera(video_source) if video_source else Camera()
     model = VisionModel()
     thresholds = load_gas_thresholds()
     # Transport is a config flag, not a code path (Stage 3): both sources
@@ -179,6 +226,9 @@ def main() -> None:
         reader = SensorReader()
     reader.start()  # never raises; a dead transport degrades to None readings
     live_log = LiveLogWriter()
+    live_log_path = Path(config["live_log"]["path"])
+    # Last thresholds written to the sidecar; only a CHANGE triggers a write.
+    published_thresholds: dict[str, float] = {}
     live_log.start()  # dashboard live-view only; all file I/O on its own thread
 
     print("FireWatch edge loop v3 (fusion + local alarm) running. Ctrl+C to stop.")
@@ -358,6 +408,19 @@ def main() -> None:
             # call was already unconditional and near-free before this
             # change, so recording every level costs nothing new.
             live_log.record(readings["mq2"], readings["mq135"], float(result["p_fire"]), level.name)
+
+            # Publish the board's OWN thresholds for the dashboard (Stage 5).
+            # Written rarely — only when they change, which is once per boot
+            # after baseline capture — so this costs nothing at 30 FPS. The
+            # dashboard is a separate process and must not reach into this
+            # one, so a small sidecar file is the decoupled way to share
+            # them. Without this the dashboard draws config.yaml's stale
+            # 10-bit Arduino-era threshold lines, which disagree with what
+            # the board is actually using (see Stage 2).
+            live_thresholds = reader.thresholds() if hasattr(reader, "thresholds") else {}
+            if live_thresholds and live_thresholds != published_thresholds:
+                published_thresholds = live_thresholds
+                _publish_thresholds(live_log_path, live_thresholds)
 
             frame_count += 1
             if frame_count % FPS_REPORT_EVERY == 0:
