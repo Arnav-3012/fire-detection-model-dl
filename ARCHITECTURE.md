@@ -11,11 +11,18 @@ to guess which file that is.
 ## 1. Runtime architecture
 
 ```
- webcam ──► vision.py (ONNX MobileNetV3-Small) ──► TemporalVoter (N-of-M) ──┐
-                                                                             │
- Arduino ──► sensors.py (MQ-2 / MQ-135, serial) ──► gas_high threshold ─────┼──► fusion.py
-                                                                             │        │
-                                                                     Level: SAFE/WATCH/WARNING/CRITICAL
+ ESP32-CAM ──WiFi──► camrelay.py ──► vision.py (ONNX MobileNetV3-Small)
+   (MJPEG)         (one upstream         ──► TemporalVoter (N-of-M) ──┐
+                    conn, many                                         │
+                    consumers)                                         │
+                                                                       │
+ ESP32 sensor ──WiFi POST──► wifi_source.py ──► gas_high = board's ────┼──► fusion.py
+  (MQ-2/MQ-135     (1 Hz JSON)  (ingest in        own GAS_HIGH state    │        │
+   + buzzer)                     edge/main.py)                          │        │
+       │                                                                │        │
+       └─ buzzes AUTONOMOUSLY off its own verdict, independent of        │        │
+          WiFi and of this host entirely                                 │        │
+                                                               Level: SAFE/WATCH/WARNING/CRITICAL
                                                                              │
                                           ┌──────────────────────────────────┘
                                           ▼
@@ -31,6 +38,23 @@ to guess which file that is.
                                           ▼
                        dispatch_log.jsonl (SIMULATED: true) + S3 archive (CRITICAL only)
 ```
+
+**Transport (Phase 13f, 2026-09-23).** Both boards are WiFi; serial is no
+longer the data path (it remains selectable via `sensors.transport` for
+bring-up). Two deliberate asymmetries:
+
+- The **sensor ingest server runs inside `edge/main.py`**, not the
+  dashboard backend, so the detector never depends on an optional
+  dev-time process.
+- The **camera relay runs inside the dashboard backend**, so Live View
+  keeps working when the edge loop is stopped. The edge loop reads frames
+  *through* that relay (`camera.edge_source`) rather than connecting to
+  the board, because `cam_node.ino` serves exactly one client at a time.
+
+Neither path is on the safety path: the sensor board owns its buzzer and
+sounds it with no host involvement, so a total network failure costs
+telemetry, the dashboard and the agent notification — never the local
+alarm.
 
 **Design principle:** deterministic detection, agentic response. Detection
 (model + threshold/vote logic) decides whether something is a hazard; the LLM

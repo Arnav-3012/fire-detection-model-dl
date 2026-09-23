@@ -34,7 +34,18 @@ internet disconnected.
 
 ## 3. Current phase and status
 
-**Project status: FUNCTIONALLY COMPLETE (2026-09-06).** Every planned
+**Project status: FUNCTIONALLY COMPLETE (2026-09-06); WIRELESS
+TRANSPORT + LIVE VIEW ADDED 2026-09-23 (Phase 13f, Stages 1-5 — see §4
+item -21).** The system now runs fully wireless: the sensor board POSTs
+readings over WiFi to the edge loop, the ESP32-CAM is consumed through a
+relay that serves the edge loop and dashboard simultaneously, and a Live
+View tab shows both live. Note that Phase 13f Stage 1 found **gas
+detection had been silently dead** against the current firmware (a
+parser rejecting every line the board sent) — so the "demo-verified"
+status below predates that fix and its gas half was not actually
+functioning at the time on this firmware.
+
+Every planned
 software phase (0-11) is built and has been demo-verified end-to-end at
 least once: v4 is the promoted production model, live in
 `models/fire_mnv3.onnx`; the full edge -> fusion -> agent -> cloud
@@ -383,6 +394,61 @@ From logs.md "Project state at a glance":
 ---
 
 ## 4. Most recent key decisions (newest first)
+
+-21. **Phase 13f: WiFi transport, camera relay, Live View — Stages 1-5
+    built and hardware-verified in one session (2026-09-23).** Closes
+    plan.md §10.6's open transport decision and the `/stream`
+    one-client constraint. Full detail in logs.md "Phase 13f"; the
+    load-bearing points:
+
+    - **Stage 1 found gas detection was DEAD, not degraded.**
+      `edge/sensors.py:_parse_line()` required exactly 2 CSV fields; the
+      ESP32 firmware sends 3 or 9. Every line was dropped, `latest()`
+      returned None forever, and the process looked healthy throughout.
+    - **Stage 2: the firmware owns the gas verdict now**
+      (`gas_high = state == "GAS_HIGH"`), not host-side re-derivation
+      from config.yaml. Measured live this session, the stale config was
+      wrong in BOTH directions on the real board: MQ-2's `warn=115.57`
+      sat *below* the clean-air reading of 119 (constant false alarm),
+      while MQ-135's `98.77` sat 3x *above* the live WARN of 31.86
+      (would miss real gas). Stage 1 without Stage 2 would have been
+      worse than the broken state. config.yaml's gas thresholds are now
+      **fallback-only**, kept for legacy firmware and as a dashboard
+      y-axis fallback.
+    - **Stage 3: sensor data goes over WiFi to the EDGE LOOP**, not the
+      dashboard backend — that backend is optional and read-only, and
+      routing detection input through it would make the dashboard a hard
+      dependency of the detector. Transport is a config flag
+      (`sensors.transport`), serial still selectable. New failure mode
+      handled: HTTP has no implicit dead-peer signal, so stale readings
+      degrade to None rather than latching a frozen `gas_high`.
+    - **Stage 4: camera relay** (`edge/camrelay.py`) holds
+      `cam_node.ino`'s single `/stream` slot and fans the newest JPEG
+      out to every consumer, no re-encoding. Runs in the backend
+      (opposite to Stage 3) so Live View survives the edge loop being
+      stopped.
+    - **Stage 5: `/ws/live` at 1 Hz** sharing ONE payload builder with
+      `/api/live-sensors` so the two cannot drift; Live View tab shows
+      chart + camera. Dashboard threshold lines now come from the
+      board's live per-boot values.
+    - **Found during verification: the dashboard was taking fire
+      detection from the LAPTOP WEBCAM.** `edge/main.py` defaults to
+      `DEVICE_INDEX = 0`, so without `--video-source` it watched a
+      laptop camera and looked like it was working. New
+      `camera.edge_source` points it at the relay, and the source is now
+      always announced at startup.
+    - **Hardware-verified:** USB fully unplugged, board phone-powered,
+      readings flowing on home WiFi *and* phone hotspot; gas triggered,
+      WiFi killed mid-alarm, **board buzzer kept sounding** while the
+      host degraded safely and recovered. 3 simultaneous camera viewers
+      from 1 upstream connection.
+    - **NOT verified:** firmware never compile-checked here
+      (`arduino-cli` absent, `cc` blocked by Xcode licence) — checked
+      structurally instead, which caught one real compile error
+      (call-before-definition in `setup()`); both boards flashed fine
+      afterwards. Frontend never rendered here; developer confirmed in
+      browser.
+    - 104 automated checks in `eval/verify_stage{1..5}_*.py`.
 
 -20. **Demo-readiness check: agent auto-trigger wiring CONFIRMED, no
     code change needed (2026-09-06, distinct from Phase 11 trial
@@ -895,6 +961,25 @@ From logs.md "Project state at a glance":
 ---
 
 ## 7. Standing open items (carried forward)
+
+- **CLOSED 2026-09-23 (Phase 13f):** plan.md §10.6's undecided data
+  transport — the sensor board now POSTs over WiFi to the edge loop.
+- **CLOSED 2026-09-23 (Phase 13f):** `cam_node.ino`'s `/stream`
+  one-client constraint blocking camera fan-out — solved by
+  `edge/camrelay.py`, not by rewriting the firmware.
+- **Stage 6 (event-triggered Lambda) NOT BUILT and explicitly
+  cuttable** — `tools/transport_plan.md` marks it so. Continuous
+  per-frame cloud inference was rejected on cost ($18-89/mo) and safety
+  grounds; local inference remains the always-on detector.
+- **Camera IP is hardcoded** in `config.yaml` (`camera.stream_url`).
+  Unlike the sensor board, the camera is a *server*, so Stage 3's
+  mDNS/subnet-scan discovery does not apply to it — the value must be
+  updated from the cam board's serial monitor after any network change
+  or reboot. This will bite at a demo if forgotten.
+- **Firmware compile verification is a standing gap on this machine:**
+  `arduino-cli` is not installed and `cc` is blocked by an unsigned
+  Xcode license, so all `.ino` edits are checked structurally only and
+  first compile happens at flash time.
 
 - `agent/graph.py` at 325 lines exceeds the 200-line soft cap — this is
   now a REVIEWED, deliberate decision (2026-09-03, see §4 item -4), not

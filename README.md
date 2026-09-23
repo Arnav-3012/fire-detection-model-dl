@@ -163,28 +163,57 @@ cd dashboard/frontend && npm install
 
 ## Running it
 
-**Edge loop (detection + local alarm + agent notify), from the repo root:**
+**Start order matters** since Phase 13f: the edge loop reads camera frames
+through the dashboard backend's relay, so the backend comes first.
+
+**1. Dashboard backend** (also hosts the camera relay):
+
+```bash
+uvicorn dashboard.backend.main:app --port 8001
+```
+
+**2. Edge loop (detection + local alarm + agent notify):**
 
 ```bash
 python edge/main.py
 ```
 
-Prints rolling FPS and the current fusion level. The buzzer and LED respond
-immediately and locally — no network dependency. WARNING/CRITICAL levels
-also POST to the agent (best-effort, 2s timeout).
+Prints rolling FPS, the current fusion level, and — since Phase 13f — the
+**video source it chose**, so a silent fall back to the laptop webcam is
+impossible to miss. The buzzer responds immediately and locally; in fact
+the sensor board buzzes on its *own* verdict with no host involvement at
+all, so it keeps working even if this process is not running.
 
-**Agent server** (separate terminal, only needed to receive `/incident` POSTs):
+**3. Frontend:**
+
+```bash
+cd dashboard/frontend && npm run dev
+```
+
+The **Live View** tab shows the live gas chart (1 Hz WebSocket) and the
+camera side by side.
+
+**Agent server** (separate terminal, only needed to receive `/incident`
+POSTs):
 
 ```bash
 uvicorn agent.server:app --port 8000
 ```
 
-**Dashboard** (separate terminals):
+### Transport configuration
 
-```bash
-uvicorn dashboard.backend.main:app --port 8001
-cd dashboard/frontend && npm run dev
-```
+Both boards are WiFi. Relevant `config.yaml` keys:
+
+| Key | Meaning |
+|---|---|
+| `sensors.transport` | `wifi` (board POSTs to the edge loop) or `serial` (USB fallback, still supported) |
+| `sensors.ingest_port` | where the edge loop listens for board POSTs (default 8002) |
+| `camera.stream_url` | the ESP32-CAM's MJPEG URL — **update after any network change**, the camera is a server and cannot be auto-discovered |
+| `camera.edge_source` | where the edge loop reads frames; normally the relay, so it and the dashboard can both see the camera |
+
+The sensor board finds this host by mDNS, then a bounded subnet scan, so
+moving between home WiFi and a phone hotspot needs **no reflash**. Register
+each network in `arduino/sensor_esp32_node/secrets.h` (gitignored).
 
 **A single trial run**, logged to `eval/results.csv`:
 

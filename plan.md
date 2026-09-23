@@ -1211,13 +1211,37 @@ broadcast to connected React dashboard clients
 rendered on a NEW "Live View" dashboard tab
 ```
 
-Note: the exact mechanism by which the sensor board's gas readings
-reach the fusion/dashboard layer over WiFi (its own HTTP POST? read by
-the same backend that receives Lambda's callback?) is not yet decided
-— firmware for the sensor board has not been written. This is an open
-design item, not an oversight.
+**RESOLVED 2026-09-23 (Phase 13f, Stages 1-5 — see logs.md).** The
+open transport question above is settled and built. What was actually
+implemented differs from the sketch above in two deliberate ways:
 
-### 10.7 Live View — new dashboard tab (not yet built)
+1. **The sensor board POSTs to the EDGE LOOP, not the dashboard
+   backend.** A plain 1 Hz HTTP POST of one JSON reading (mq2, mq135,
+   state, six live thresholds) — no MQTT, since there is no broker to
+   depend on and the consumer is a single known host. The ingest server
+   lives inside `edge/main.py` (`edge/wifi_source.py`) rather than
+   `dashboard/backend`, because that backend is an *optional* dev-time
+   process: routing sensor data through it would have made the
+   dashboard a hard dependency of the **detector**, inverting
+   `fusion.py`'s "no model, no LLM, no network" guarantee.
+
+2. **Detection did NOT move to Lambda.** The diagram above has Lambda
+   running the ONNX model on each frame. Continuous per-frame cloud
+   inference was rejected on cost ($18-89/mo) and, more importantly, on
+   safety grounds: a WAN outage must never silently downgrade the
+   detector. Local inference stays the always-on path. Event-triggered
+   Lambda as a cloud *second opinion* on `GAS_HIGH` remains available as
+   Stage 6, and is explicitly cuttable.
+
+Camera fan-out — unaddressed in the sketch above — is solved by a relay
+(`edge/camrelay.py`) holding `cam_node.ino`'s single `/stream` slot and
+serving every consumer from a lock-guarded newest-frame slot. Both the
+edge loop and the dashboard read through it.
+
+Host discovery across networks (home WiFi vs phone hotspot) is by mDNS,
+then a bounded subnet scan, so switching networks needs no reflash.
+
+### 10.7 Live View — new dashboard tab (BUILT 2026-09-23, Phase 13f Stage 5)
 
 Real-time camera feed via WebSocket, with:
 

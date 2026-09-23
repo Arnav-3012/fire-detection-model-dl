@@ -12206,3 +12206,191 @@ definition-before-use ordering) but never actually built. Compile in
 the Arduino IDE before flashing.
 
 ---
+
+## Phase 13f — WiFi transport, camera relay, Live View: Stages 1-5 (2026-09-23)
+
+Resolves **plan.md §10.6's open transport decision**, open since the plan
+was written, and the `/stream` one-client constraint flagged in the
+cam_node.ino review entry immediately above.
+
+Worked from `tools/transport_plan.md`. All five stages were written and
+**hardware-verified in one session**. 104 automated checks now live in
+`eval/verify_stage{1..5}_*.py`.
+
+### Stage 1 — the parser was dropping every line the board sent
+
+`edge/sensors.py:_parse_line()` guarded `if len(parts) != 2: return`.
+The ESP32 firmware emits 3 fields (`145,42,WARMUP`) or 9 (the OK-state
+line with six thresholds). **Every line was silently dropped**,
+`latest()` returned `{mq2: None, mq135: None}` forever, and gas
+detection was dead — while the process looked perfectly healthy.
+
+Parser now accepts 2/3/9 fields and skips the firmware's non-CSV lines
+(`[SUSPECT_JUMP]`, `[WARMUP_STABLE]`, `BASELINE_CAPTURE done:`, boot
+banners), mirroring the hardware-proven reader in
+`eval/verify_live.py:read_one()`. `latest()` gained `state`;
+new `thresholds()` exposes the six live per-boot values.
+
+Judgment calls: an unknown state string drops the **whole line** (if
+field 3 is unrecognised the readings are not trustworthy either);
+thresholds persist across later non-OK lines, and a partial set is
+ignored rather than half-applied.
+
+### Stage 2 — the firmware, not config.yaml, owns the gas verdict
+
+`edge/main.py` re-derived a second verdict from `config.yaml`'s August
+**10-bit Arduino-era** thresholds while the 12-bit board computes
+WARN/DANGER per boot from ratio thresholds. Replaced with
+`gas_high = (state == "GAS_HIGH")`.
+
+**How bad this actually was, measured on real hardware this session.**
+The board's live values were `baseline_mq2=120.98 warn_mq2=235.02`,
+`baseline_mq135=15.99 warn_mq135=31.86` (both verified to match the
+ratio formula exactly). Against config's `mq2_warn=115.57` /
+`mq135_warn=98.77`:
+
+- **MQ-2: false alarm.** Clean-air reading was 119 — *above* config's
+  115.57. The old path would have reported `gas_high=True`
+  continuously, and any vision detection at all would have fused to
+  CRITICAL.
+- **MQ-135: missed detection.** Config's 98.77 sits **3x above** the
+  live WARN of 31.86 — real gas would never have tripped it.
+
+A false alarm and a missed detection on the same board simultaneously.
+Stage 1 without Stage 2 would have been *worse* than the broken state.
+
+`compute_gas_high()`/`load_gas_thresholds()` kept as a loud fallback for
+legacy 2-field firmware only. The host warm-up timer now applies on that
+fallback path **only** — the board's own slope gate is strictly better
+than a fixed 240s guess, and stacking both would suppress a real
+GAS_HIGH the board is already buzzing on.
+
+**`set_alarm()` is documented as inert**, not changed: the ESP32 has no
+`Serial.read()` at all and buzzes autonomously. Announced once at
+startup rather than editing safety-critical firmware before a deadline.
+
+### Stage 3 — WiFi transport replaces serial
+
+Board POSTs one JSON reading per second (mq2, mq135, state, six
+thresholds) to an ingest server in **`edge/main.py`, not the dashboard
+backend**. The backend is documented read-only and is an *optional*
+dev-time process; routing sensor data through it would have made the
+dashboard a hard dependency of the **detector**, inverting
+`fusion.py`'s "no model, no LLM, no network" claim.
+
+`WifiSensorSource` exposes `SensorReader`'s exact surface, so transport
+is a config flag (`sensors.transport`), not a code path. Serial stays
+selectable.
+
+**Staleness is the genuinely new failure mode.** Serial signals a dead
+board implicitly (the port errors); HTTP does not — a board losing power
+leaves its last POST looking like a healthy frozen reading forever, and
+could latch `gas_high=True` on stale data. Readings older than
+`ingest_stale_seconds` read as None, routing into the "no data yet" path
+main.py already handles.
+
+**Host discovery, which took several iterations to get right.** The
+board must find the laptop across networks with no reflash:
+1. mDNS hostname — *failed in practice*, `MDNS.queryHost()` never
+   resolved macOS Bonjour here
+2. Configured IP — only used when **on the same subnet**; a home
+   `192.168.1.3` while on a `172.20.10.x` hotspot guarantees failure
+3. **Bounded subnet scan** — 20 hosts x 120ms, once at connect, never
+   per-POST. This is what actually works. Found the laptop on the
+   *first* probe on the hotspot.
+
+A further real bug: the firmware treated "connected" as success. The
+board sat happily on home WiFi while the laptop was on the hotspot, so
+no POST could ever land. It now **verifies the host is reachable** and
+moves to the next registered network if not.
+
+Firmware POST is the last statement in `loop()`, strictly after the
+buzzer write, 400ms timeout, no retry, return value ignored. Serial
+output byte-identical (verified: 8 reading-line `Serial` calls before
+and after).
+
+**Hardware-verified:** USB unplugged entirely, board powered from a
+phone, readings flowing on both home WiFi and phone hotspot; thresholds
+matched the ratio formula; gas triggered, then WiFi killed mid-alarm —
+**the board's buzzer kept sounding throughout**, the host degraded to
+`gas_high=False` and recovered cleanly.
+
+### Stage 4 — camera relay resolves the one-client constraint
+
+`edge/camrelay.py` holds the single upstream `/stream` connection and
+keeps the newest JPEG in a lock-guarded slot; every consumer reads the
+slot. **No re-encoding** — frames pass through as the exact bytes the
+board sent. Parts are read by `Content-Length` rather than
+boundary-scanning, so JPEG data containing boundary-like bytes cannot
+desync the parser.
+
+Runs in the **dashboard backend**, opposite to Stage 3's ingest, and
+deliberately so: Live View must work when `edge/main.py` is stopped, and
+unlike sensor data, camera frames are not on the detection path.
+
+Endpoints: `/api/camera/stream` (MJPEG), `/snapshot`, `/status`.
+Snapshot returns **503 on a stale frame** rather than silently serving a
+minutes-old image.
+
+**Hardware-verified against the real ESP32-CAM:** 3 simultaneous viewers
+each received 27 identical frames from **exactly one** upstream
+connection. While the relay held the slot, direct clients got nothing —
+the constraint demonstrating itself.
+
+`cam_node.ino` also gained the sensor board's multi-network list plus
+**multi-pass connect**: a phone hotspot frequently refuses the first
+association, and a single pass stranded the camera on home WiFi while
+the laptop was on the hotspot.
+
+### Stage 5 — WebSocket + Live View tab
+
+`/ws/live` pushes at 1Hz. REST and WS share **one** payload builder, so
+they cannot drift — that identity is what lets `LiveSensorChart.jsx` be
+reused unchanged and makes falling back to polling a one-line change.
+`useWebSocket` returns `usePolling`'s exact `{data, error, loading}`
+contract with reconnect backoff.
+
+Dashboard thresholds now prefer the board's live values, published by
+the edge loop to a sidecar file (written only on change, atomically).
+
+**Bug caught here, same class as Stage 2's.** Firmware names fields
+`warn_mq2`; the dashboard contract uses `mq2_warn`. The first version
+merged the raw dict, which **added** six keys while leaving the stale six
+in place — the chart would have kept drawing `115.57` while appearing to
+update. Now mapped explicitly, with a regression test.
+
+Second bug: `useWebSocket` first used `window.location`, but the app
+talks to a backend on :8001 while Vite serves :5173 — it would have
+connected to the dev server. Now derives from `api.js`'s `BASE`.
+
+### Edge loop now reads the camera through the relay
+
+Found during verification: **the dashboard was showing fire detection
+from the laptop webcam.** `edge/main.py` defaults to `DEVICE_INDEX = 0`,
+so without `--video-source` it watched a laptop camera pointed at a desk
+— and looked like it was working.
+
+New `camera.edge_source` points the edge loop at the **relay**, so it and
+the dashboard both see the ESP32-CAM (connecting to the board directly
+would take its only slot). The chosen source is now **always announced**
+at startup, and falling back to the webcam prints an explicit warning.
+Verified: OpenCV pulls 6.5fps of 320x240 through the relay, matching the
+board's native rate.
+
+### NOT verified
+
+- **Firmware was never compile-checked here.** `arduino-cli` is not
+  installed and `cc` is blocked by an unsigned Xcode license. Changes
+  were checked structurally (C-aware brace balance, definition-before-use
+  ordering, `snprintf` output extracted and parsed as JSON). One genuine
+  compile error was caught this way — `setup()` calling
+  `beginNextWifiNetwork()`/`resolveIngestUrl()` before their definitions,
+  fixed with forward declarations. Both boards flashed and ran
+  successfully afterwards.
+- **The frontend was never rendered here** — no `npm run dev` on this
+  machine. Developer confirmed Live View working in the browser.
+- A regex-based brace checker reported a false imbalance mid-session (it
+  ate `"http://"` string literals as comments); a proper C-aware parser
+  showed depth 0. No code was wrong — the tool was.
+
+---
