@@ -1,10 +1,32 @@
-"""Day 6 SensorReader: background serial reader for the Arduino MQ node.
+"""Day 6 SensorReader: background serial reader for the MQ sensor node.
 
 Plan.md's Day 6 prompt, adjusted for the DHT22 cut (Phase 0g) exactly as
-every other file already is: arduino/sensor_node.ino streams a two-field
-"mq2,mq135" CSV line once per second at 9600 baud, and (since Phase 7)
-accepts a single alarm command byte — see set_alarm(). There is
-no temp/humidity parsing and no temp_rate computation here — not stubbed,
+every other file already is: the board streams one CSV line per second,
+and (since Phase 7) the alarm byte is written back — see set_alarm().
+
+LINE FORMAT (2026-09-23): the current ESP32 firmware
+(arduino/sensor_esp32_node/sensor_esp32_node.ino) emits THREE shapes,
+not the original two-field one:
+
+    145,42                              2 fields, legacy Uno sketch
+    145,42,WARMUP                       3 fields, pre-baseline states
+    145,42,ok,baseline_mq2=...,warn_mq2=...,danger_mq2=...,
+           baseline_mq135=...,warn_mq135=...,danger_mq135=...
+
+The third field is the board's own STATE (WARMUP, BASELINE_CAPTURE, ok,
+ok(BASELINE_TROUBLE), GAS_HIGH) and is authoritative — the firmware owns
+the per-boot baseline, the ratio math and the buzzer, so main.py takes
+its gas verdict from this string rather than re-deriving one. The
+nine-field OK-state form also publishes the six LIVE thresholds, exposed
+via thresholds(); that is what keeps the dashboard from drawing stale
+config lines.
+
+Until 2026-09-23 this parser required exactly 2 fields and therefore
+DROPPED EVERY LINE the ESP32 sends, leaving latest() permanently None
+and gas detection dead. Parsing here now mirrors the hardware-proven
+reader in eval/verify_live.py:read_one().
+
+There is no temp/humidity parsing and no temp_rate computation here — not stubbed,
 removed: with DHT22 cut there is no temperature signal to rate-limit, and
 dead code pretending otherwise would be exactly the kind of silent
 placeholder this project keeps getting burned by (see logs.md: both
@@ -17,6 +39,7 @@ block the vision loop, and the reader thread must never die from one
 malformed line.
 """
 
+import re
 import threading
 import time
 
@@ -43,6 +66,32 @@ RECONNECT_DELAY_SECONDS = 3.0
 ALARM_ON_BYTE = b"A"
 ALARM_OFF_BYTE = b"S"
 
+# key=value trailer of the firmware's OK-state line. Identical to
+# eval/verify_live.py:FIELD_RE — that reader is hardware-proven against
+# this exact firmware, so the format is copied rather than reinvented.
+FIELD_RE = re.compile(r"([a-zA-Z0-9_]+)=(-?\d+\.?\d*)")
+
+# The six threshold names the OK-state line publishes. Named explicitly
+# so a firmware that starts printing extra fields cannot silently widen
+# what thresholds() returns to the dashboard.
+THRESHOLD_FIELDS = (
+    "baseline_mq2",
+    "warn_mq2",
+    "danger_mq2",
+    "baseline_mq135",
+    "warn_mq135",
+    "danger_mq135",
+)
+
+# State strings sensor_esp32_node.ino can print as field 3. Matched
+# exactly (same convention as verify_live.py / calibrate_mq.py): an
+# unrecognized state means the board is running firmware this parser
+# does not understand, and guessing at it would be worse than dropping
+# the line.
+VALID_STATES = frozenset(
+    {"WARMUP", "BASELINE_CAPTURE", "ok", "ok(BASELINE_TROUBLE)", "GAS_HIGH"}
+)
+
 
 class SensorReader:
     """Reads the Arduino's CSV stream on a daemon thread.
@@ -68,6 +117,16 @@ class SensorReader:
         self._lock = threading.Lock()
         self._mq2: int | None = None
         self._mq135: int | None = None
+
+        # The board's own verdict string (field 3), None on legacy
+        # 2-field firmware. main.py trusts this over any host-side
+        # re-derivation — see the module docstring.
+        self._state: str | None = None
+
+        # Six live thresholds from the OK-state line, empty until one
+        # arrives (WARMUP/BASELINE_CAPTURE lines carry none, and the
+        # board has no thresholds to publish during those states).
+        self._thresholds: dict[str, float] = {}
 
         # time.monotonic() of the FIRST valid parsed line, None until then.
         # main.py's gas warm-up gate anchors to this, not process start:
@@ -106,12 +165,33 @@ class SensorReader:
         being a daemon — this exists for orderly shutdown in tests)."""
         self._stop.set()
 
-    def latest(self) -> dict[str, int | None]:
-        """Most recent raw ADC readings; values are None before the
-        first valid line (caller decides how to treat 'no data yet' —
-        fusion's gas_high must not fire on an absent sensor)."""
+    def latest(self) -> dict[str, int | str | None]:
+        """Most recent raw ADC readings plus the board's own state.
+
+        mq2/mq135 are None before the first valid line (caller decides
+        how to treat 'no data yet' — fusion's gas_high must not fire on
+        an absent sensor). "state" is the firmware's verdict string, and
+        is None both before the first line AND on legacy 2-field
+        firmware that has no state to report; main.py distinguishes
+        those two cases by whether mq2 is also None.
+        """
         with self._lock:
-            return {"mq2": self._mq2, "mq135": self._mq135}
+            return {"mq2": self._mq2, "mq135": self._mq135, "state": self._state}
+
+    def thresholds(self) -> dict[str, float]:
+        """The six thresholds the firmware last published, or {} if it
+        has not published any yet (legacy firmware, or still in
+        WARMUP/BASELINE_CAPTURE — the board genuinely has no baseline to
+        derive them from before capture completes).
+
+        These are the LIVE, per-boot values the board is actually using.
+        config.yaml's gas thresholds are a stale fallback by comparison
+        (they are 10-bit Arduino-era numbers), so anything drawing
+        threshold lines should prefer these and fall back to config only
+        when this is empty.
+        """
+        with self._lock:
+            return dict(self._thresholds)
 
     def first_reading_monotonic(self) -> float | None:
         """time.monotonic() of the first valid line, None if none yet.
@@ -125,6 +205,21 @@ class SensorReader:
 
     def set_alarm(self, on: bool) -> None:
         """Fire-and-forget alarm byte, written on the CALLER's thread.
+
+        INERT AGAINST CURRENT FIRMWARE (2026-09-23). These bytes were
+        read by arduino/sensor_node/sensor_node.ino:31 (the old Uno
+        sketch). The current sensor_esp32_node.ino has NO Serial.read()
+        at all — it owns its buzzer and sounds it autonomously off its
+        own GAS_HIGH state. So this call still writes, and the write
+        still succeeds, but NOTHING ACTS ON IT.
+
+        Deliberately left in place rather than removed: it is correct
+        for the legacy board, it is harmless here, and adding host-forced
+        alarm to safety-critical firmware before a deadline is not worth
+        the risk. The board buzzing on its own is the safer failure mode
+        anyway — the buzzer cannot be silenced by a wedged host. main.py
+        announces this once at startup so the no-op is explicit rather
+        than a silent lie.
 
         Deliberately NOT routed through the reader thread or any queue:
         info.md 2.2 makes the local alarm the step nothing may delay, so
@@ -188,19 +283,68 @@ class SensorReader:
                 time.sleep(RECONNECT_DELAY_SECONDS)
 
     def _parse_line(self, raw: bytes) -> None:
-        """Update the pair from one line; anything unparseable is
-        dropped without comment (partial boot lines and serial noise are
-        routine, and per-line warnings would flood the console at 1 Hz
-        for a transient that fixes itself on the next line)."""
-        try:
-            parts = raw.decode("ascii", errors="strict").strip().split(",")
-            if len(parts) != 2:
-                return
-            mq2, mq135 = int(parts[0]), int(parts[1])
-        except (UnicodeDecodeError, ValueError):
+        """Update readings/state/thresholds from one line; anything
+        unparseable is dropped without comment (partial boot lines and
+        serial noise are routine, and per-line warnings would flood the
+        console at 1 Hz for a transient that fixes itself on the next
+        line).
+
+        Accepts all three firmware shapes documented at module level.
+        Decoding is lenient (errors="ignore", as verify_live.py does)
+        rather than strict: a single corrupted byte mid-line used to
+        discard an otherwise-good reading, and the int() parse below is
+        what actually rejects garbage.
+        """
+        text = raw.decode("ascii", errors="ignore").strip()
+
+        # Bracketed diagnostics ([WARMUP_STABLE], [SUSPECT_JUMP],
+        # [BASELINE_TROUBLE], ...) and the non-CSV "BASELINE_CAPTURE
+        # done:" line are printed by the firmware on their OWN lines —
+        # they never prefix a reading, so skipping them here cannot eat
+        # a reading. Checked before the field split because
+        # [SUSPECT_JUMP] contains no commas at all and would otherwise
+        # fall through to the length check.
+        if not text or text.startswith("[") or text.startswith("BASELINE_CAPTURE done:"):
             return
+
+        parts = text.split(",")
+        if len(parts) < 2:
+            return
+        try:
+            # float()-then-int() (as verify_live.py does), not int()
+            # directly: the firmware prints integers today, but a future
+            # "145.0" would otherwise silently kill the whole line.
+            mq2 = int(float(parts[0]))
+            mq135 = int(float(parts[1]))
+        except ValueError:
+            return
+
+        state: str | None = None
+        if len(parts) >= 3:
+            state = parts[2]
+            if state not in VALID_STATES:
+                # Unknown third field: this is not a line shape we
+                # understand, so the READINGS are not trustworthy either
+                # (it may not be a reading line at all). Drop it whole
+                # rather than accepting the numbers with a bogus state.
+                return
+
+        # Thresholds only when present; the six-field trailer appears on
+        # OK-state lines only. An incomplete set is ignored rather than
+        # partially applied — half-updated threshold lines on a
+        # dashboard are worse than none.
+        parsed = {k: float(v) for k, v in FIELD_RE.findall(",".join(parts[3:]))}
+        thresholds = (
+            {k: parsed[k] for k in THRESHOLD_FIELDS}
+            if all(k in parsed for k in THRESHOLD_FIELDS)
+            else None
+        )
+
         with self._lock:
             self._mq2 = mq2
             self._mq135 = mq135
+            self._state = state
+            if thresholds is not None:
+                self._thresholds = thresholds
             if self._first_reading_monotonic is None:
                 self._first_reading_monotonic = time.monotonic()

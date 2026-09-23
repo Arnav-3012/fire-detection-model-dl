@@ -10,13 +10,33 @@ architectural claim of the project:
 Nothing network-related appears before the set_alarm() call, and nothing
 may reorder this — a network failure must never delay the local alarm.
 
-The gas warm-up gate (Phase 7 decision): for gas_warmup_seconds after the
-first valid serial reading, gas_high is forced False before fuse() sees
-it, because a cold MQ-135 reads ~100-102 — already above the calibrated
-mq135_warn=98.77, which was measured on warmed sensors. Only the gas
-contribution is suppressed; vision detection runs normally throughout, so
-the worst case during the gate is a WARNING (vision-only cap), never a
-false gas-corroborated CRITICAL.
+GAS VERDICT — ONE SOURCE OF TRUTH (2026-09-23, Stage 2). The FIRMWARE
+decides. sensor_esp32_node.ino owns the per-boot baseline, the ratio
+thresholds and the buzzer, and publishes a STATE field; gas_high is
+simply (state == "GAS_HIGH"). The host does NOT re-derive a second
+verdict, because config.yaml's gas thresholds are August 10-bit
+Arduino-era numbers (mq2_warn=115.57) while the 12-bit board computes
+WARN ~237-252 dynamically per boot — two verdicts that can disagree
+live, with the board's being the correct one.
+
+compute_gas_high()/load_gas_thresholds() survive as a FALLBACK ONLY, for
+legacy 2-field firmware that sends no state, and fire a loud once-only
+warning when used.
+
+The Phase 7 host warm-up gate (gas_warmup_seconds, forcing gas_high
+False because a cold MQ-135 reads ~100-102, above the warmed-sensor
+mq135_warn=98.77) now applies ON THE FALLBACK PATH ONLY. On the firmware
+path the board's own slope-based warm-up gate replaces it — it is
+strictly better than a fixed timer, and stacking both would suppress a
+real GAS_HIGH the board is already buzzing on. WARMUP/BASELINE_CAPTURE
+report gas_high False regardless, since the board withholds its verdict
+during them. Only the gas contribution is ever suppressed; vision
+detection runs normally throughout, so the worst case during the gate is
+a WARNING (vision-only cap), never a false gas-corroborated CRITICAL.
+
+BUZZER OWNERSHIP: the ESP32 firmware has no Serial.read() and buzzes
+autonomously off its own GAS_HIGH, so set_alarm() is inert against it —
+stated loudly at startup rather than silently pretending otherwise.
 
 Video source (phase13a-2, togglable test mode): defaults to the laptop
 webcam. Pass --video-source http://<esp32-ip>/stream to read frames from
@@ -94,6 +114,10 @@ def format_status(
     gate suppressing, not a sensor failure.
     """
     gas = f"mq2={readings['mq2']} mq135={readings['mq135']}"
+    # Board state shown verbatim so a disagreement between the firmware's
+    # verdict and gas_high is visible at a glance rather than inferred.
+    state = readings.get("state")
+    gas += f" state={state}" if state is not None else " state=- (fallback)"
     gate_note = " (GATED)" if gated else ""
     # p_smoke/smoke_votes added 2026-09-04: the smoke-noise investigation
     # had only p_fire on this line, so the actual smoke evidence behind a
@@ -142,7 +166,22 @@ def main() -> None:
     live_log.start()  # dashboard live-view only; all file I/O on its own thread
 
     print("FireWatch edge loop v3 (fusion + local alarm) running. Ctrl+C to stop.")
-    print(f"Gas warm-up gate: {warmup_seconds:.0f}s after first sensor reading.")
+    print(
+        "Gas verdict: FIRMWARE state field is authoritative (board owns baseline, "
+        "ratio math and buzzer)."
+    )
+    print(
+        f"  config.yaml gas thresholds are FALLBACK ONLY, used if the board sends no "
+        f"state; the {warmup_seconds:.0f}s host warm-up gate applies on that path only."
+    )
+    # set_alarm() is a no-op against the current ESP32 firmware, which has
+    # no Serial.read() at all — it buzzes autonomously off its own
+    # GAS_HIGH. Said once, loudly, at startup rather than changing
+    # safety-critical firmware before a deadline (2026-09-23 decision).
+    print(
+        "  NOTE: the BOARD owns the buzzer. set_alarm() writes are inert against "
+        "sensor_esp32_node.ino (no Serial.read()); host alarm state is display-only."
+    )
 
     # Buzzer state lives HERE, not on the Arduino: the sketch is a dumb
     # actuator ('A'/'S', no ack), so this flag is what makes alarm writes
@@ -152,6 +191,8 @@ def main() -> None:
     last_notify = time.monotonic() - notify_cooldown
     gate_announced = False
     gate_cleared_announced = False
+    # Latches the once-only "no STATE field" fallback warning below.
+    fallback_announced = False
     frame_count = 0
     window_start = time.perf_counter()
 
@@ -167,26 +208,79 @@ def main() -> None:
             # fire on an absent sensor), gated (valid data, still inside
             # the settle window), or live.
             first_reading = reader.first_reading_monotonic()
+            state = readings["state"]
             gated = False
+
             if readings["mq2"] is None or readings["mq135"] is None or first_reading is None:
+                # No data yet (sensor absent/booting).
                 gas_high = False
-            elif time.monotonic() - first_reading < warmup_seconds:
-                gated = True
-                gas_high = False
-                if not gate_announced:
-                    gate_announced = True
-                    print(
-                        f"*** GAS WARM-UP GATE ACTIVE — gas_high forced False for "
-                        f"{warmup_seconds:.0f}s (cold MQ-135 reads above its warn "
-                        f"threshold); vision detection unaffected ***"
-                    )
-            else:
-                gas_high = compute_gas_high(
-                    float(readings["mq2"]), float(readings["mq135"]), thresholds
-                )
-                if gate_announced and not gate_cleared_announced:
+
+            elif state is not None:
+                # --- PRIMARY PATH: the board's own verdict ---------------
+                # The firmware owns the per-boot baseline, the ratio math
+                # and the buzzer, so its GAS_HIGH state IS the verdict —
+                # host-side re-derivation from config.yaml's stale 10-bit
+                # Arduino-era numbers could disagree with the board live.
+                # One source of truth (2026-09-23 Stage 2 decision).
+                gas_high = state == "GAS_HIGH"
+
+                # WARMUP/BASELINE_CAPTURE already withhold the board's
+                # verdict (it has no baseline yet, and its own buzzer is
+                # suppressed during both), so those states are gas_high
+                # False by the line above. Surfacing them as `gated`
+                # keeps the status line honest about *why* gas is
+                # inactive. The host-side warm-up TIMER is deliberately
+                # NOT applied here — the board's slope-based gate is
+                # strictly better than a fixed 240s guess, and applying
+                # both would suppress a real GAS_HIGH the board is
+                # already buzzing on.
+                if state in ("WARMUP", "BASELINE_CAPTURE"):
+                    gated = True
+                    if not gate_announced:
+                        gate_announced = True
+                        print(
+                            f"*** BOARD WARM-UP ({state}) — board withholds its gas "
+                            f"verdict until its own baseline is captured; vision "
+                            f"detection unaffected ***"
+                        )
+                elif gate_announced and not gate_cleared_announced:
                     gate_cleared_announced = True
-                    print("*** GAS WARM-UP GATE CLEARED — gas_high now live ***")
+                    print(f"*** BOARD WARM-UP CLEARED (state={state}) — gas_high now live ***")
+
+            else:
+                # --- FALLBACK PATH: legacy 2-field firmware -------------
+                # No state field, so there is no board verdict to trust
+                # and the host must re-derive one from config.yaml. These
+                # thresholds are stale by design (see config.yaml's
+                # sensors block) — hence the loud, once-only warning. The
+                # fixed warm-up TIMER applies only here, because this
+                # firmware has no slope-based gate of its own.
+                if not fallback_announced:
+                    fallback_announced = True
+                    print(
+                        "*** WARNING: sensor board reports no STATE field — falling "
+                        "back to host-side gas thresholds from config.yaml. These are "
+                        "stale 10-bit Arduino-era values and may disagree with the "
+                        "board. Flash arduino/sensor_esp32_node/sensor_esp32_node.ino "
+                        "to restore the firmware verdict. ***"
+                    )
+                if time.monotonic() - first_reading < warmup_seconds:
+                    gated = True
+                    gas_high = False
+                    if not gate_announced:
+                        gate_announced = True
+                        print(
+                            f"*** GAS WARM-UP GATE ACTIVE (fallback) — gas_high forced "
+                            f"False for {warmup_seconds:.0f}s (cold MQ-135 reads above "
+                            f"its warn threshold); vision detection unaffected ***"
+                        )
+                else:
+                    gas_high = compute_gas_high(
+                        float(readings["mq2"]), float(readings["mq135"]), thresholds
+                    )
+                    if gate_announced and not gate_cleared_announced:
+                        gate_cleared_announced = True
+                        print("*** GAS WARM-UP GATE CLEARED — gas_high now live ***")
 
             # --- 1. fusion level ----------------------------------------
             # vision_fire is the temporal voter's smoothed alarm, not the

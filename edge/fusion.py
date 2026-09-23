@@ -53,12 +53,21 @@ def temp_spiking() -> bool:
 
 
 def load_gas_thresholds(config_path: str = "config.yaml") -> dict[str, float]:
-    """Load the calibrated MQ warn/danger thresholds from config.yaml.
+    """Load the MQ warn/danger thresholds from config.yaml. FALLBACK ONLY.
 
-    Loaded from config rather than hardcoded (info.md 3.1) because these
-    are real calibrated values (2026-08-31, plan.md 5.5 procedure) that
-    get re-derived whenever the sensors are recalibrated — editing them
-    must mean editing one file.
+    SUPERSEDED 2026-09-23 (Stage 2): the firmware is the source of truth
+    for the gas verdict. sensor_esp32_node.ino derives WARN/DANGER per
+    boot from ratio thresholds against its own captured baseline and
+    publishes them live (edge/sensors.py:thresholds()); edge/main.py
+    takes gas_high straight from the board's GAS_HIGH state.
+
+    The config values this returns are August 10-bit Arduino-era numbers
+    (mq2_warn=115.57) and DISAGREE with the 12-bit board's live WARN of
+    ~237-252. They are used only when a legacy 2-field board reports no
+    state field, and main.py warns loudly when that happens.
+
+    Kept loaded from config rather than hardcoded (info.md 3.1) for the
+    same reason as before: one file to edit.
     """
     with open(config_path) as f:
         sensors = yaml.safe_load(f)["sensors"]
@@ -72,6 +81,11 @@ def load_gas_thresholds(config_path: str = "config.yaml") -> dict[str, float]:
 
 def compute_gas_high(mq2: float, mq135: float, thresholds: dict[str, float]) -> bool:
     """True when either MQ sensor is at or above its WARN threshold.
+
+    FALLBACK ONLY since 2026-09-23 (Stage 2) — see load_gas_thresholds().
+    The production path does NOT call this: the board's own GAS_HIGH
+    state is the verdict. This runs only for legacy 2-field firmware
+    that publishes no state, against thresholds known to be stale.
 
     plan.md's Day 7 spec passes gas_high into fuse() as a boolean but
     never defines its derivation; this definition — either sensor >= its
