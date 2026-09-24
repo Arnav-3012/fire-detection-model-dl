@@ -12394,3 +12394,259 @@ board's native rate.
   showed depth 0. No code was wrong — the tool was.
 
 ---
+
+## Phase 13g — Stage 6a/6b: cloud second-opinion Lambda deployed (2026-09-23)
+
+Endpoint live: `firewatch-second-opinion`, ap-south-1, Function URL with
+AuthType=AWS_IAM. Verdict verified against local inference:
+**p_fire 0.998336017131805 cloud vs local — bit-identical.**
+
+### The design changed because the measurement contradicted the plan
+
+`additiontoplan.md` A.1 proposed MAX p_fire over five 224x224 crops of the
+native frame as the cloud's verdict, on the theory that the full-frame
+downscale hides small/distant flame. Measured on the val set (150
+frames/class) BEFORE building it:
+
+    rule                    fire-recall   neutral-FP   smoke-FP
+    full-frame   @0.30         0.980        0.000       0.047
+    5-crop MAX   @0.30         0.993        0.180       0.227
+    5-crop MAX   @0.70         0.687        0.033       0.033
+    5-crop MEAN  @0.30         0.920        0.033       0.033
+
+**No threshold at which 5-crop max beats the full-frame baseline.** The
+max of five draws shifts the distribution up for EVERY frame, not only
+fire ones, so any scene with a warm-coloured corner clears the bar: clean
+neutral frames went 0 -> 23 false positives of 120. It bought +1.3%
+recall for +18% FP.
+
+So the crops stayed and the DECISION RULE went (developer call). The
+verdict is full-frame — identical arithmetic to local — and the five crop
+scores ride along as diagnostics. The max-minus-mean SPREAD does separate
+the classes (fire 0.330, smoke 0.156, neutral 0.104), so it is genuinely
+informative as detail: a high max with a LOW mean is one hot region (a
+real distant flame), while high max with a HIGH mean is fire-like
+everywhere (a wall of flame — or a screen showing one, which is
+`edge/fusion.py` rule 4's known TV limitation).
+
+### Preprocessing is shared, not retyped — and OpenCV is not optional
+
+`cloud/lambda_infer/preprocess.py` holds the steps once; local and Lambda
+both use it. Verified bit-identical to `edge/vision.py` over 60 frames.
+
+Dropping OpenCV (~130MB) for Pillow was tested and REJECTED on numbers:
+cv2 vs PIL bilinear resize of the same image through the same model
+differs by mean 0.035 / p95 0.193 / max 0.556, flipping the verdict on
+**8 of 400 frames (2%)**. Item A's premise is that a local/cloud
+disagreement is informative; a 2% manufactured disagreement rate from the
+resize library would drown that signal. No PIL filter matches cv2
+(tested BILINEAR/BICUBIC/LANCZOS/BOX/HAMMING; best maxdiff still 144).
+
+### Packaging: a four-way constraint problem
+
+Four constraints must hold simultaneously. Each was violated once for
+real, and each is invisible locally — it only appears as an import or
+load error inside Lambda:
+
+1. **IR version.** Model is IR 10 / opset 20 (pytorch 2.13). ORT <= 1.16.3
+   maxes at IR 9. `manylinux2014`'s newest ORT *is* 1.16.3. Needs >= 1.17.
+2. **glibc.** Lambda python3.11 is Amazon Linux 2 (glibc 2.26), NOT AL2023
+   — this assumption cost a cycle. The wheels need 2.27. python3.12 is
+   AL2023 (2.34). Needs python3.12.
+3. **NumPy ABI.** No numpy 1.x wheels exist for py3.12, so the package
+   necessarily gets numpy 2.x. ORT 1.17/1.18 were built against numpy 1.x
+   and abort with `_ARRAY_API not found`. ORT 1.18.1 pinned numpy<2.0
+   explicitly; 1.19.0 dropped it. Needs ORT >= 1.19.
+4. **Size.** 250MB unzipped cap. ORT 1.29 (matching local) -> 277MB.
+   opencv 5.0.0 -> 253MB. Both breach it.
+
+Solution at **236.9MB**: python3.12 + ORT 1.20.1 + opencv 4.10 pulled
+under a DIFFERENT platform tag (`manylinux2014`, 63MB vs 5.0.0's 153MB).
+Mixing tags is safe in this direction only — a 2014 wheel (glibc 2.14)
+runs anywhere a 2_28 one does. Verified by reading ELF version records:
+every binary needs glibc <= 2.27 against 2.34 available, all cpython-312.
+
+Rejected: pruning OpenCV's ~33MB of video codecs (libavcodec/libaom/
+libvpx). FFMPEG is compiled into `cv2.abi3.so`, so they are dynamically
+linked and removing them could break `import cv2` — untestable here
+without a Linux runtime, and not worth the risk for headroom we do not
+need.
+
+### External data — the bug that passed every local test
+
+`models/fire_mnv3.onnx` is 307KB of GRAPH ONLY; the 6MB of weights live
+in a sidecar. Two traps: the sidecar must travel with the model, and it
+must keep its ORIGINAL name — the graph references
+`fire_mnv3_v4.onnx.data` (the checkpoint it was promoted from), not a
+name derived from the .onnx. Renaming breaks it as thoroughly as omitting
+it, so the build reads the name out of the graph.
+
+This passed every local test because they ran from the repo root, where
+`models/` sat beside them. It only failed when the flat Lambda layout was
+simulated in a scratch directory. **Test in the layout that will actually
+run** is the transferable lesson.
+
+### Version skew local vs cloud: measured, not assumed
+
+Local runs ORT 1.29.0, Lambda runs 1.20.1. Same frame:
+
+    p_fire   0.998336017131805  vs  0.998336017131805   delta 0.00e+00
+    p_smoke                                             delta 5.8e-09
+    crop max/mean                                       delta < 3.0e-06
+
+p_fire is bit-identical; worst deviation anywhere is float32 rounding at
+3e-06. The decision threshold is 0.30, so this cannot flip a verdict.
+
+### Cost posture
+
+Reserved concurrency could NOT be set: this account's total concurrency
+limit is **10** (new-account quota) and AWS keeps 10 unreserved minimum.
+Not worth a support ticket for a demo. The account quota is itself the
+ceiling — a runaway loop is bounded at 10 in-flight invocations — and the
+client-side guards (rising-edge trigger, cooldown, session counter) are
+unaffected. Timeout 10s (vs 900s default), memory 512MB, measured warm
+inference ~23ms locally / 722ms cold on Lambda.
+
+`--delete` tears down function + URL + role in one command. The cheapest
+Lambda is a deleted one; run it after the demo.
+
+### 13 build-time guards
+
+Every failure above is now checked locally before a deploy, because each
+one otherwise costs a full build+upload+invoke cycle: runtime/python/
+glibc consistency, model IR vs ORT pin, numpy ABI vs ORT pin, cpython tag
+of every built .so, handler + sibling modules present, external-data
+sidecar resolved, size limit, and config drift on update (`update_
+function_code` ships the zip ONLY — Runtime/Handler/Memory/Timeout keep
+their create-time values, which cost another cycle).
+
+### NOT verified
+
+- Linux binaries were never executed locally (no container runtime on
+  this machine, arm64 macOS cannot run them). Correct platform confirmed
+  by reading ELF headers; "imports successfully" was proven only by the
+  deploy itself.
+- The cloud verdict is not yet wired to anything — Stage 6c (edge
+  trigger) and 6d (Live View agree/disagree) are not built. Detection is
+  currently byte-for-byte unchanged, which is the invariant.
+
+## Phase 13g (cont.) — Stage 6c/6d: edge trigger + Live View agree/disagree (2026-09-24)
+
+Stage 6 is now complete in code. Detection is still byte-for-byte
+unchanged: the new client has no return value, and its output goes only
+to a sidecar file the dashboard reads.
+
+### 6c — `cloud/second_opinion.py`, called from `edge/main.py`
+
+Called every frame after `set_alarm()` and `notify_agent()`. It fires on the
+**rising edge of the board's GAS_HIGH**, so one gas event means one call. Three
+cost guards, all on the client side, because reserved concurrency could not be
+set on this account:
+rising edge, `cooldown_seconds` (60), `max_calls_per_session` (20). No
+retries. botocore **only signs** the request (SigV4, service `lambda`,
+region parsed from the Function URL). The request itself is one
+`requests.post()`, so botocore's retry logic cannot turn one event into
+several invocations.
+
+A rising edge that lands inside the cooldown, over budget, or while a
+call is in flight is **skipped, not queued**. A deferred call would score a
+frame from after the moment that mattered.
+
+**Non-blocking.** The encode, sign and POST all run on a daemon thread. On a
+trigger the loop pays for one `frame.copy()`; on every other frame, one boolean
+compare. This differs from `notify_agent()`, which is synchronous.
+A cold start or a dead WAN costs the detector nothing.
+
+**The trigger moved from the backend to the edge loop** (transport_plan.md
+said "Backend, on a GAS_HIGH ingest"). The edge loop is where gas_high and
+the frame local actually scored both exist, and the backend is optional.
+
+### JPEG quality 95, measured
+
+The cloud scores a re-encoded copy of local's frame, so the encoding itself
+can cause a disagreement. Over 300 val frames (100 per class), re-encoded
+vs original through the same model:
+
+    q80  mean |dp_fire| 0.0079  max 0.242  verdict flips 3/300 (1.0%)
+    q90  mean           0.0049  max 0.139  verdict flips 3/300 (1.0%)
+    q95  mean           0.0027  max 0.068  verdict flips 1/300 (0.3%)
+
+q80 is what `notify_agent()` uses. Here it would create a 1%
+disagreement rate on its own, which is the same argument that kept OpenCV
+in the Lambda zip.
+
+### 6d — Live View panel
+
+`dashboard/backend/main.py` adds the sidecar as a `second_opinion` key on
+the shared live payload. REST and WebSocket stay byte-identical (the Stage 5
+contract), and the chart ignores the extra key.
+`components/SecondOpinion.jsx` shows LOCAL (level badge, visual verdict)
+next to CLOUD (agrees / DISAGREES), a one-line note on what the direction
+of a disagreement means, the 5-crop detail labelled as diagnostic, and a
+short history. Colours come from `levels.js`: agreement uses SAFE and
+disagreement uses WARNING. The cloud never raises the alarm, so it never gets
+CRITICAL red.
+
+**Agreement is on the visual question only**: "is there fire or smoke in this
+frame?" Local's side is `alarm or smoke_sustained`, which is what `fuse()` consumed.
+The cloud's side uses the same per-frame rules from config (fire >= 0.30;
+smoke argmax AND >= 0.45). Gas cannot be compared, because only local has it.
+
+### Fixed along the way: Live View always read "sensor offline"
+
+`LiveView.jsx`'s `isStale()` did `new Date(latest.timestamp)` on unix
+SECONDS, so every sample parsed as January 1970. Overview.jsx already
+multiplied by 1000. Fixed to match.
+
+### Verified (offline, no AWS)
+
+A local HTTP server stood in for the Function URL. It asserted a SigV4
+`Authorization` header for `/lambda/aws4_request` and ran the real
+`lambda_handler`. Results:
+- 50 frames of sustained GAS_HIGH gave exactly 1 call
+- re-rise inside cooldown: skipped
+- re-rise while a slow call was in flight: skipped
+- budget 3/3: every later rise skipped (message printed once)
+- local quiet + fire frame: DISAGREES, as intended
+- endpoint refused: recorded as "no opinion", nothing raised
+- disabled: inert, sidecar reads `enabled: false`
+- cloud p_fire on the q95 re-encode of AoF04017.jpg: 0.9984, which matches 6b's
+  0.998336
+
+### Live verification (2026-09-24, developer-run)
+
+- **Visual test** (`scripts/test_second_opinion.py`, added because the
+  sensor board was still in warm-up): live camera frames went through the
+  local model and then ONE real call to the deployed Function URL. The
+  signed request was accepted and the verdict came back. The Live View
+  panel showed it. The script forces enabled=True with a budget of 1 for
+  its own run and does not modify config.yaml.
+- **Live test with the edge loop**: reported working by the developer.
+- Exact per-run numbers were not recorded here. The CloudWatch
+  one-invocation-per-event check is not recorded here either.
+
+## Phase 13g (cont.) — Item B cut; teardown made complete (2026-09-24)
+
+**Item B (S3-triggered re-scoring) CUT**, developer call. The archive
+holds 2 incident packets and 0 snapshots. Both packets are CLI test
+packets from 2026-09-02/03 with `snapshot_path: None`, not real
+triggers. The false-positive rate Item B exists to produce needs real
+CRITICAL triggers building up over time plus manual labelling, and
+neither can happen before the deadline. Full reasoning and "revisit
+when" conditions are in `additiontoplan.md`, "Item B decision".
+
+**`deploy_lambda.py --delete` now also removes the S3-staged build**
+(`lambda-builds/firewatch_infer.zip`, 84.2MB). The zip exceeds the 50MB
+direct-upload limit, so it is staged in the project bucket, and it
+outlived the function. That costs fractions of a cent a month, but the
+teardown's "nothing left billing" line was not literally true.
+
+**Location redacted from git history.** Precise home coordinates (and
+the area and nearest-station names that pinned them) had been committed
+to this file in `23b1ce5` and pushed to a PUBLIC repo. They were
+rewritten out of all 17 commits with `git filter-repo --replace-text`
+and force-pushed (`--force-with-lease` against the known remote head,
+0 forks). The rewritten history differs from the pre-rewrite backup in
+exactly 11 redacted lines. The old head `2cbc4ff` stays reachable on
+GitHub by exact hash until GitHub garbage-collects it. A GitHub
+sensitive-data support request purges it sooner.

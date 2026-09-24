@@ -1,8 +1,7 @@
 # FireWatch — WiFi Transport, Event-Triggered Lambda, and Live View
 
 **Status: EXECUTED 2026-09-23. Stages 1–5 built and hardware-verified;
-Stage 6 not built (explicitly cuttable).** See logs.md "Phase 13f" for what
-was actually done, including where the implementation deviated from this
+Stage 6 built and live-tested 2026-09-24 (logs.md "Phase 13g").** See logs.md "Phase 13f" for what was actually done, including where the implementation deviated from this
 plan. Kept as written for the record — the reasoning below is what the work
 was based on.
 
@@ -16,6 +15,10 @@ Deviations worth knowing when reading the stages below:
 - Stage 3 also needed host discovery the plan did not anticipate (mDNS +
   subnet scan), because the laptop's IP changes between home WiFi and a
   phone hotspot.
+- **Stage 6's trigger lives in the edge loop, not the backend** (the plan
+  said "Backend, on a GAS_HIGH ingest"). Same reason as Stage 3: the
+  edge loop is where gas_high and the frame local actually scored both
+  live, and the backend is optional.
 - **Stage 5 additionally repointed the edge loop at the relay**
   (`camera.edge_source`): it was silently defaulting to the laptop webcam,
   which the plan did not catch.

@@ -1241,6 +1241,22 @@ edge loop and the dashboard read through it.
 Host discovery across networks (home WiFi vs phone hotspot) is by mDNS,
 then a bounded subnet scan, so switching networks needs no reflash.
 
+**Stage 6 BUILT 2026-09-24 (Phase 13g — see logs.md).** Event-triggered
+Lambda second opinion, as point 2 above left open:
+
+- **Trigger:** the rising edge of the board's `GAS_HIGH` — one gas event,
+  one invocation, never per frame. Guards are client-side
+  (`cloud/second_opinion.py`): rising edge, 60s cooldown, 20 calls per
+  session, no retries. Default OFF (`aws.second_opinion.enabled`).
+- **Advisory only.** The verdict goes to a sidecar file the dashboard
+  reads and has no path back into `fuse()`. Disable it and detection is
+  byte-for-byte unchanged. It never gates the buzzer.
+- **Verdict is full-frame**, identical arithmetic to local; the 5-crop
+  scores ride along as diagnostics only (5-crop MAX was measured and
+  rejected: +1.3% recall for +18% neutral FP).
+- **Shown in Live View** beside the local verdict with an explicit
+  agree/disagree state, on the visual question only (fire/smoke in frame).
+
 ### 10.7 Live View — new dashboard tab (BUILT 2026-09-23, Phase 13f Stage 5)
 
 Real-time camera feed via WebSocket, with:

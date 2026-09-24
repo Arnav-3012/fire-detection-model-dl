@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 from agent.locate import find_nearest_fire_station
+from cloud.second_opinion import sidecar_path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("firewatch.dashboard")
@@ -99,6 +100,7 @@ WS_PUSH_INTERVAL_SECONDS = 1.0
 _FEEDBACK_CSV = _REPO_ROOT / _CONFIG["agent"]["feedback_log"]
 _RESULTS_CSV = _REPO_ROOT / "eval/results.csv"
 _LIVE_LOG_PATH = _REPO_ROOT / _CONFIG["live_log"]["path"]
+_SECOND_OPINION_PATH = sidecar_path(_LIVE_LOG_PATH)
 
 # Cached across requests: the underlying coordinates are hardcoded
 # (config.yaml location.*, plan.md section 1) and don't change between
@@ -230,15 +232,35 @@ def _live_sensors_payload() -> dict[str, Any]:
             if firmware_key in live:
                 thresholds[config_key] = live[firmware_key]
 
+    second_opinion = _read_second_opinion()
     if not _LIVE_LOG_PATH.exists():
         return {"ok": False, "reason": "no live data yet — is edge/main.py running?",
-                "readings": [], "thresholds": thresholds}
+                "readings": [], "thresholds": thresholds, "second_opinion": second_opinion}
     try:
         readings = json.loads(_LIVE_LOG_PATH.read_text())
     except (OSError, ValueError) as exc:
         logger.warning("live-sensors read failed: %s", exc)
-        return {"ok": False, "reason": str(exc), "readings": [], "thresholds": thresholds}
-    return {"ok": True, "reason": None, "readings": readings, "thresholds": thresholds}
+        return {"ok": False, "reason": str(exc), "readings": [], "thresholds": thresholds,
+                "second_opinion": second_opinion}
+    return {"ok": True, "reason": None, "readings": readings, "thresholds": thresholds,
+            "second_opinion": second_opinion}
+
+
+def _read_second_opinion() -> dict[str, Any] | None:
+    """Stage 6d: the cloud second-opinion sidecar cloud/second_opinion.py
+    writes, verbatim. None when the edge loop has never written one.
+
+    Rides on the live payload rather than its own endpoint so Live View
+    gets it over the socket it already holds -- and so REST and WS stay
+    byte-identical, which is Stage 5's contract. An additive key: the
+    chart ignores it.
+    """
+    if not _SECOND_OPINION_PATH.exists():
+        return None
+    try:
+        return json.loads(_SECOND_OPINION_PATH.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def _read_firmware_thresholds() -> dict[str, float]:

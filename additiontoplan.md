@@ -1,6 +1,8 @@
 # additiontoplan.md — two cloud additions (Lambda beyond the second opinion)
 
-**Status: PROPOSAL, nothing built. Written 2026-09-23.**
+**Status: Item A BUILT 2026-09-24 (with the A.1 decision rule changed — see
+logs.md Phase 13g). Item B CUT 2026-09-24 — see "Item B decision" below.
+Written 2026-09-23.**
 
 This file adds two items to the cloud story. It does **not** replace
 `plan.md`, `phase12.md`, or `tools/transport_plan.md`. Read
@@ -202,9 +204,47 @@ separately in `report.md` — the two-tier version is a stronger claim than
 
 ## Checklist
 
-- [ ] A.1 Multi-crop inference in Lambda (5-crop batch, max + mean p_fire)
-- [ ] A.3 Agree/disagree display in Live View
-- [ ] B.1 S3-triggered nightly re-scoring + manifest
-- [ ] B.3 Manual labelling pass (or documented as pending)
-- [ ] Record in `plan.md` 10.6 that per-frame continuous inference was
+- [x] A.1 Multi-crop inference in Lambda (5-crop batch, max + mean p_fire) —
+      built, but as DIAGNOSTICS; the verdict is full-frame (5-crop MAX measured
+      and rejected, logs.md Phase 13g)
+- [x] A.3 Agree/disagree display in Live View
+- [x] B.1 S3-triggered nightly re-scoring + manifest — CUT (see below)
+- [x] B.3 Manual labelling pass — CUT with B.1 (see below)
+- [x] Record in `plan.md` 10.6 that per-frame continuous inference was
       rejected, and that the cloud verdict is advisory only
+
+---
+
+## Item B decision — CUT (developer call, 2026-09-24)
+
+B.3 already warned that the headline number needs manual labelling.
+Checking the archive before building showed the problem goes further:
+there is almost nothing to label.
+
+    s3://<bucket>/device_01/   2 incident packets, 0 JPEG snapshots
+
+Both packets are from 2026-09-02/03, and both have `snapshot_path: None`.
+They are test packets from `agent/graph.py`'s command-line entry point,
+not real triggers. The upload path itself is fine: real edge-loop
+incidents carry a snapshot through `agent/server.py`, and
+`cloud/uploader.py` uploads it. But the corpus B.2 depends on, **real
+CRITICAL triggers under real ambient conditions over time**, does not
+exist yet and cannot build up before the deadline. Staged demo fires are
+not ambient false positives, so they would not produce the number either.
+
+Building B now would add a second function, an IAM role with S3 read and
+write, a bucket notification (itself a classic source of recursive
+triggers), a labelling tool and a dashboard panel. All of that would
+produce a manifest of zero rows and a rate reading "pending."
+
+**Revisit when:** the system has been deployed long enough to archive
+real CRITICAL incidents with snapshots (roughly 30 or more). The design
+above still stands. If it is ever built, the notes that matter are:
+trigger on `device_*/…jpg` only and write results under a separate
+prefix, so a write can never re-trigger the function; and restrict
+`dashboard/backend`'s `/api/s3-archive` to `device_*` prefixes, since it
+currently treats every top-level folder as a device.
+
+For `report.md`: state that the deployment false-positive rate is **not
+measured** (info.md 2.4: no metric until measured), and that the val-set
+and staged-trial numbers in `eval/` are what exist.

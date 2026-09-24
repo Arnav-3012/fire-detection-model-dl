@@ -1,5 +1,6 @@
 import LiveSensorChart from "../components/LiveSensorChart";
 import StateCard from "../components/StateCard";
+import SecondOpinion from "../components/SecondOpinion";
 import Reveal from "../components/Reveal";
 import { ChartIcon } from "../components/icons";
 import { backendUrl } from "../api";
@@ -26,7 +27,9 @@ function isStale(readings) {
   if (!readings || readings.length === 0) return true;
   const latest = readings[readings.length - 1];
   if (!latest?.timestamp) return true;
-  return Date.now() - new Date(latest.timestamp).getTime() > LIVE_STALE_MS;
+  // Unix SECONDS (edge/livelog.py), hence * 1000 — without it every sample
+  // parsed as January 1970 and this tab always read "sensor offline".
+  return Date.now() - latest.timestamp * 1000 > LIVE_STALE_MS;
 }
 
 export default function LiveView({ liveSensors, error, loading }) {
@@ -93,6 +96,18 @@ export default function LiveView({ liveSensors, error, loading }) {
             that the board is on this network
           </StateCard>
         </div>
+      </Reveal>
+
+      {/* Stage 6d. Spans both columns: it compares what the chart's gas
+          event triggered against what the camera frame shows. */}
+      <Reveal className="panel glass chart-panel second-opinion-panel">
+        <div className="chart-panel-header">
+          <h3 className="panel-title">
+            Cloud second opinion
+            <span className="panel-title-subtitle"> — advisory, never gates the alarm</span>
+          </h3>
+        </div>
+        <SecondOpinion data={liveSensors?.second_opinion} />
       </Reveal>
     </div>
   );

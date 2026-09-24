@@ -51,6 +51,7 @@ import argparse
 import base64
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -64,6 +65,10 @@ from livelog import LiveLogWriter
 from sensors import SensorReader
 from wifi_source import WifiSensorSource
 from vision import VisionModel
+
+# cloud/ lives at the repo root, beside edge/ -- not on this script's path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cloud.second_opinion import SecondOpinion  # noqa: E402  (path must be set first)
 
 # Reporting cadence only — affects nothing about detection (see Phase 4).
 FPS_REPORT_EVERY = 30
@@ -230,9 +235,13 @@ def main() -> None:
     # Last thresholds written to the sidecar; only a CHANGE triggers a write.
     published_thresholds: dict[str, float] = {}
     live_log.start()  # dashboard live-view only; all file I/O on its own thread
+    # Stage 6c. Advisory only: its result goes to a sidecar file for the
+    # dashboard and has no path back into fuse(). Disabled = inert.
+    second_opinion = SecondOpinion(config)
 
     print("FireWatch edge loop v3 (fusion + local alarm) running. Ctrl+C to stop.")
     print(f"Sensor transport: {transport.upper()}")
+    print(second_opinion.describe())
     print(
         "Gas verdict: FIRMWARE state field is authoritative (board owns baseline, "
         "ratio math and buzzer)."
@@ -393,6 +402,12 @@ def main() -> None:
                 notify_agent(
                     agent_url, level, reason, result, readings, gas_high, gated, frame
                 )
+
+            # Cloud second opinion (Stage 6c) — also strictly after
+            # set_alarm(), and non-blocking: the POST runs on its own
+            # thread, so a cold start or dead WAN never stalls this loop.
+            # Fires once per GAS_HIGH rising edge, not per frame.
+            second_opinion.on_frame(gas_high, frame, level.name, result)
 
             print(format_status(result, readings, gas_high, gated, level, reason))
 

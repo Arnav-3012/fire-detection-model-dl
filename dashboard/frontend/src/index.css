@@ -1190,3 +1190,62 @@ body {
   background: rgba(0, 0, 0, 0.35);
   display: block;
 }
+
+/* --- Stage 6d: cloud second opinion (2026-09-24) ------------------- */
+.second-opinion-panel {
+  grid-column: 1 / -1;
+}
+
+.opinion-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 700px) {
+  .opinion-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.opinion-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.opinion-detail,
+.opinion-meta,
+.opinion-crops {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.opinion-note {
+  margin: 12px 0 0;
+  font-size: 0.88rem;
+}
+
+.opinion-crops,
+.opinion-meta {
+  margin: 10px 0 0;
+}
+
+.opinion-history {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 6px;
+  font-size: 0.82rem;
+}
+
+.opinion-history li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
