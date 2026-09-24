@@ -61,7 +61,15 @@ class LiveLogWriter:
     def stop(self) -> None:
         self._stop.set()
 
-    def record(self, mq2: int | None, mq135: int | None, p_fire: float, level: str) -> None:
+    def record(
+        self,
+        mq2: int | None,
+        mq135: int | None,
+        p_fire: float,
+        level: str,
+        state: str | None = None,
+        thresholds: dict[str, float] | None = None,
+    ) -> None:
         """Sample the current readings if the 1s interval has elapsed.
 
         Called every frame (~30 FPS) but enqueues at most once per interval,
@@ -74,6 +82,12 @@ class LiveLogWriter:
         one-fusion-implementation rule info.md holds edge/fusion.py to).
         Free to include: it costs nothing beyond one more dict key on a
         sample this loop already builds every second.
+
+        `state` / `thresholds` (2026-09-24): the board's state string and
+        the six thresholds it published, or None while it has no baseline.
+        Stored per sample so the dashboard draws each reading against the
+        threshold in force at that second — the firmware's EMA baseline
+        moves them, and a reboot re-baselines them entirely.
         """
         now = time.monotonic()
         if now - self._last_sample < self._interval:
@@ -81,7 +95,8 @@ class LiveLogWriter:
         self._last_sample = now
         self._queue.put(
             {"timestamp": time.time(), "mq2": mq2, "mq135": mq135,
-             "p_fire": round(float(p_fire), 4), "level": level}
+             "p_fire": round(float(p_fire), 4), "level": level,
+             "state": state, "thr": thresholds}
         )
 
     def _run(self) -> None:

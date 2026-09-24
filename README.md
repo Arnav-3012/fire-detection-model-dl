@@ -2,9 +2,11 @@
 
 IoT fire and gas hazard detection with local edge inference and agentic response.
 
-A laptop-hosted edge node with a webcam and an Arduino sensor board detects
-fire or smoke locally, cross-checks it against gas readings, and produces a
-verified alert that reaches a real phone — with the internet disconnected.
+A laptop-hosted edge node detects fire or smoke from an ESP32-CAM video
+stream, cross-checks it against an ESP32 gas-sensor board (both over WiFi),
+and produces a verified alert that reaches a real phone — with the internet
+disconnected. The sensor board also sounds its own buzzer on its own gas
+verdict, with no host involved.
 Detection is fully deterministic and runs on-device; an LLM agent only
 composes and delivers the alert afterward. Emergency dispatch is always
 **simulated** — see [Safety and disclosures](#safety-and-disclosures) before
@@ -22,25 +24,33 @@ anything else.
 6. [Model](#model)
 7. [Evaluation](#evaluation)
 8. [Dashboard](#dashboard)
-9. [Safety and disclosures](#safety-and-disclosures)
-10. [Known limitations](#known-limitations)
-11. [Project docs](#project-docs)
+9. [Cloud second opinion](#cloud-second-opinion)
+10. [Safety and disclosures](#safety-and-disclosures)
+11. [Known limitations](#known-limitations)
+12. [Project docs](#project-docs)
 
 ---
 
 ## Architecture
 
 ```
- webcam ──► vision.py (ONNX MobileNetV3-Small) ──► TemporalVoter (N-of-M) ──┐
-                                                                             │
- Arduino ──► sensors.py (MQ-2 / MQ-135, serial) ──► gas_high threshold ─────┼──► fusion.py
-                                                                             │        │
+ ESP32-CAM ──WiFi──► camrelay.py ──► vision.py (ONNX MobileNetV3-Small)
+   (MJPEG)       (dashboard backend:      ──► TemporalVoter (N-of-M) ──┐
+                  one upstream conn,                                    │
+                  many consumers)                                       │
+                                                                        │
+ ESP32 sensor ──WiFi POST──► wifi_source.py ──► gas_high = board's ─────┼──► fusion.py
+  board (MQ-2/MQ-135  (1 Hz JSON)  (ingest inside   own GAS_HIGH state   │        │
+  + buzzer)                         edge/main.py)                        │        │
+       └─ buzzes AUTONOMOUSLY on its own verdict — no WiFi, no host needed        │
                                                                      Level: SAFE/WATCH/WARNING/CRITICAL
-                                                                             │
-                                          ┌──────────────────────────────────┘
+                                                                                  │
+                                          ┌───────────────────────────────────────┘
                                           ▼
-                          1. Local buzzer + LED — fires unconditionally, before any network call
+                          1. Local alarm — before any network call
                           2. POST /incident (best-effort, 2s timeout, never blocks step 1)
+                          3. Cloud second opinion on a GAS_HIGH rising edge (advisory only,
+                             background thread, result goes to the dashboard — never to fuse())
                                           │
                                           ▼
                            agent/graph.py (LangGraph state machine)
@@ -58,8 +68,12 @@ only ever asked to phrase a sentence about a decision that has already been
 made — it never sees raw sensor values and never gates escalation. If the
 LLM call fails, a deterministic template ships instead.
 
-**The core architectural claim:** local alarm (buzzer + LED) is driven
-before the network is touched, and a network failure can never suppress it.
+**The core architectural claim:** the local alarm is driven before the
+network is touched, and a network failure can never suppress it. Since the
+two-board migration this is stronger than before: the sensor board owns its
+buzzer and sounds it on its own GAS_HIGH verdict, so a dead WiFi link, a
+stopped edge loop or a crashed laptop costs telemetry and notifications —
+never the gas alarm.
 This is what makes the offline demo — disconnect the network mid-run, the
 alarm still fires — meaningful rather than a demo trick.
 
@@ -78,17 +92,23 @@ firewatch/
 ├── .env.example           # tracked — credential names only
 ├── .env                   # gitignored — real credentials
 │
-├── arduino/sensor_node/sensor_node.ino   # Arduino sketch: MQ-2/MQ-135 read + buzzer control
+├── arduino/
+│   ├── sensor_esp32_node/  # ESP32 DevKit firmware: MQ-2/MQ-135, per-boot baseline, ratio thresholds, own buzzer, WiFi POST
+│   ├── cam_node/           # ESP32-CAM firmware: MJPEG /stream, multi-network WiFi
+│   ├── sensor_calibration_capture/  # calibration logging sketch
+│   └── sensor_node/        # RETIRED Arduino Uno sketch (pre-Phase 13), kept for history
 │
 ├── train/                 # dataset prep, training, ONNX export, leakage checks
 ├── models/                # gitignored — checkpoints and ONNX exports (see Model below)
 │
 ├── edge/                  # the always-running local loop
-│   ├── camera.py          #   webcam frame grabber
+│   ├── camera.py          #   frame grabber (reads the camera relay's MJPEG stream)
+│   ├── camrelay.py        #   ESP32-CAM relay: one upstream connection, many consumers
 │   ├── vision.py          #   ONNX inference + TemporalVoter (N-of-M voting)
-│   ├── sensors.py         #   threaded Arduino serial reader
+│   ├── wifi_source.py     #   WiFi ingest server for the sensor board (default transport)
+│   ├── sensors.py         #   serial reader (fallback transport, same interface)
 │   ├── fusion.py          #   the SAFE/WATCH/WARNING/CRITICAL decision table
-│   ├── livelog.py         #   1 Hz rolling snapshot for the dashboard's live chart
+│   ├── livelog.py         #   1 Hz rolling snapshot (readings, level, board state, thresholds) for the dashboard
 │   └── main.py             #   entry point — the loop
 │
 ├── agent/                 # response only, never detection
@@ -100,14 +120,17 @@ firewatch/
 │   ├── tools.py             #   simulate_dispatch() — writes dispatch_log.jsonl
 │   └── server.py           #   FastAPI POST /incident
 │
-├── cloud/uploader.py       # S3 archive, CRITICAL incidents only
+├── cloud/
+│   ├── uploader.py         # S3 archive, CRITICAL incidents only
+│   ├── second_opinion.py   # advisory Lambda call on a GAS_HIGH rising edge (never reaches fusion)
+│   └── lambda_infer/       # Lambda handler + preprocessing shared bit-for-bit with edge/vision.py
 │
 ├── dashboard/
-│   ├── backend/            # read-only FastAPI (port 8001)
+│   ├── backend/            # read-only FastAPI (port 8001) + camera relay + /ws/live
 │   └── frontend/           # Vite + React
 │
 ├── eval/                  # adversarial videos, threshold sweeps, trial logging
-├── scripts/                # data capture / scraping / review helpers
+├── scripts/                # data capture / review helpers, deploy_lambda.py (deploy + --delete teardown)
 ├── logs/                   # gitignored — local hardware trial logs + archived/superseded snapshots
 │
 ├── ARCHITECTURE.md          # system map + which doc/log/data file to use when
@@ -148,9 +171,10 @@ TWILIO_FROM_NUMBER=
 TWILIO_TO_NUMBER=
 ```
 
-`config.yaml` needs your machine's Arduino serial port, your real (or
-approximate) coordinates for the fire-station lookup, and an S3 bucket name
-you own. `config.example.yaml` documents every key inline — read it before
+`config.yaml` needs the ESP32-CAM's stream URL (`camera.stream_url`), your
+real (or approximate) coordinates for the fire-station lookup, and an S3
+bucket name you own. The sensor board's WiFi networks go in
+`arduino/sensor_esp32_node/secrets.h` (gitignored; copy `secrets.example.h`). `config.example.yaml` documents every key inline — read it before
 editing, values are not arbitrary (thresholds are calibrated, not guessed).
 
 For the dashboard frontend:
@@ -172,7 +196,13 @@ through the dashboard backend's relay, so the backend comes first.
 uvicorn dashboard.backend.main:app --port 8001
 ```
 
-**2. Edge loop (detection + local alarm + agent notify):**
+**2. Agent server** (only needed to receive `/incident` POSTs and send alerts):
+
+```bash
+uvicorn agent.server:app --port 8000
+```
+
+**3. Edge loop (detection + local alarm + agent notify):**
 
 ```bash
 python edge/main.py
@@ -184,21 +214,20 @@ impossible to miss. The buzzer responds immediately and locally; in fact
 the sensor board buzzes on its *own* verdict with no host involvement at
 all, so it keeps working even if this process is not running.
 
-**3. Frontend:**
+If the edge loop fails with `Could not open video stream at
+'http://127.0.0.1:8001/api/camera/stream'`, the backend (step 1) is not
+running. Check the camera separately with
+`curl http://127.0.0.1:8001/api/camera/status` — it should report
+`"live": true`.
+
+**4. Frontend:**
 
 ```bash
 cd dashboard/frontend && npm run dev
 ```
 
-The **Live View** tab shows the live gas chart (1 Hz WebSocket) and the
-camera side by side.
-
-**Agent server** (separate terminal, only needed to receive `/incident`
-POSTs):
-
-```bash
-uvicorn agent.server:app --port 8000
-```
+The home page shows the live camera, gas readings and system status — see
+[Dashboard](#dashboard).
 
 ### Transport configuration
 
@@ -229,12 +258,15 @@ behavior.
 
 ## Hardware
 
+Two boards since Phase 13 (the Arduino Uno is retired):
+
 | Component | Pin | Notes |
 |---|---|---|
-| MQ-2 (gas/smoke) | A0 | Analog only — never the module's D0 digital pin, which is a hand-tuned comparator useless for fusion |
-| MQ-135 (air quality) | A1 | Second independent gas signal |
-| Active buzzer | D8 | Local alarm — fires unconditionally |
-| Webcam | USB | MacBook built-in used throughout; any `cv2`-compatible camera works |
+| ESP32 DevKit (sensor board) | — | Runs `arduino/sensor_esp32_node`; WiFi POST at 1 Hz, own buzzer |
+| MQ-2 (gas/smoke) | GPIO34 | Analog only, via a 22k/10k divider (5 V sensor → 3.3 V ADC). Never the module's D0 comparator pin |
+| MQ-135 (air quality) | GPIO35 | Second independent gas signal, same divider |
+| Active buzzer | GPIO33 | Driven by the board's own GAS_HIGH state — fires with no host involved |
+| AI-Thinker ESP32-CAM (camera board) | — | Runs `arduino/cam_node`; MJPEG `/stream`, one client at a time (hence the relay). The module shipped with a GC2145 sensor, not the OV2640 the plan assumed — see `logs.md` Phase 13a-2 for the colour/driver consequences |
 
 DHT22 (temperature) was cut from the build — cost and availability — so
 `temp_spiking()` is permanently stubbed `False`. This is a disclosed,
@@ -246,10 +278,13 @@ wiring troubleshooting table are in `plan.md` sections 5 and Appendix A/B —
 read those before touching hardware if you have no prior electronics
 experience; that's who they were written for.
 
-**MQ sensor calibration is a burn-in-then-measure procedure, not a guess.**
-Readings taken before 24–48 hours of continuous power are not valid — see
-`plan.md` section 5.5 for the exact procedure and `config.example.yaml` for
-what the calibrated values in this build measured.
+**Gas thresholds are computed by the firmware, per boot.** The sensor board
+waits for a slope-based warm-up gate, captures a fresh baseline, then derives
+WARN/DANGER from ratio thresholds and tracks slow baseline drift (capped per
+hour, frozen during an alarm). Absolute hard ceilings back this up so a slow
+leak can't be learned away. The board publishes its thresholds and state
+with every reading; `config.yaml`'s gas values are a legacy fallback only.
+The full calibration history is in `logs.md` Phase 13b.
 
 ---
 
@@ -320,6 +355,11 @@ python eval/run_eval.py --model-path models/fire_mnv3.onnx --adversarial-dir eva
 python eval/run_trial.py --label <name> --expected <LEVEL>   # logs one row to eval/results.csv
 ```
 
+These v4 results were measured on the laptop-webcam path. After the move to
+the ESP32-CAM (and `votes_needed` 5 → 3), the TV/laptop test and the
+evaluation trials were re-run by the developer on the two-board hardware and
+reported passing; the per-run counts are recorded in `logs.md` once logged.
+
 `eval/results.csv` is the single source of truth for hazard/non-hazard trial
 outcomes and latency — nothing in a report is typed by hand.
 
@@ -327,12 +367,50 @@ outcomes and latency — nothing in a report is typed by hand.
 
 ## Dashboard
 
-Read-only FastAPI backend (port 8001) + Vite/React frontend. Five tabs:
-Overview (live fusion status, sensor chart), Live Incidents, Historical
-Archive (S3), Evaluation Trials, Nearest Fire Station. The backend never
-writes to the edge loop's state — it only reads `dispatch_log.jsonl`,
-`eval/alert_feedback.csv`, `eval/results.csv`, and the live sensor snapshot
-edge/main.py writes each second.
+Read-only FastAPI backend (port 8001) + Vite/React frontend, four tabs. The
+backend never writes to edge-loop or agent state; it reads
+`dispatch_log.jsonl`, `eval/alert_feedback.csv`, `eval/results.csv`, the
+live snapshot `edge/livelog.py` writes each second, and the second-opinion
+sidecar. It also hosts the camera relay.
+
+**Overview (home)** is live-first, fed by one 1 Hz WebSocket (`/ws/live`):
+
+- **Status strip** — the live fused level plus edge-feed age, sensor-board
+  state, camera liveness, threshold source and time since the last
+  incident. At WARNING/CRITICAL the whole strip takes the level colour.
+- **Live camera** — MJPEG via the relay, with a LIVE / SIGNAL LOST badge
+  driven by the relay's own frame age (a frozen MJPEG image otherwise looks
+  live), the level, a `p_fire` meter and fullscreen. Paused while the
+  browser tab is hidden.
+- **Right now** — one bullet bar per sensor (reading against the board's
+  baseline / warn / danger, with headroom) and a 60 s `p_fire` sparkline.
+- **Gas chart** — *Hazard index* view (each reading mapped onto its own
+  sensor's thresholds at that second: baseline 0, warn 1, danger 2, so both
+  sensors share one axis) or *Raw ADC* lanes with the thresholds drawn as
+  step lines that follow the firmware's drift. 1 / 5 / 10 min windows.
+  Warm-up periods are shaded; config.yaml values are never drawn.
+- Nearest fire station (display-only), most recent event, cloud second
+  opinion, incident counts and the fusion-level timeline.
+
+**Live Incidents**, **Historical Archive** (S3) and **Evaluation Trials**
+are unchanged.
+
+---
+
+## Cloud second opinion
+
+On the rising edge of the board's GAS_HIGH, `cloud/second_opinion.py`
+sends the current frame to an AWS Lambda running the **same v4 ONNX model
+with bit-identical preprocessing**, and the dashboard shows LOCAL next to
+CLOUD with an agree/disagree state. Disagreement is the signal worth a look.
+
+It is **advisory only**: the call runs on a background thread after the
+local alarm, its result goes to a sidecar file the dashboard reads, and
+nothing flows back into `fuse()`. Off by default
+(`aws.second_opinion.enabled`), capped per session, with a cooldown. Deploy
+and tear down with `scripts/deploy_lambda.py` (`--delete` removes the
+function, URL, role and staged build). The design, packaging constraints
+and measured local-vs-cloud agreement are in `logs.md` Phase 13g.
 
 ---
 
@@ -377,6 +455,11 @@ edge/main.py writes each second.
 - **DHT22 (temperature) was cut** from the hardware — `temp_spiking()` is
   permanently `False`. One of fusion's five decision rules (rule 2:
   fire + rapid temperature rise → CRITICAL) can never fire as a result.
+- **The ESP32-CAM's IP is hardcoded** in `camera.stream_url`. The camera is
+  a server, so it can't use the sensor board's discovery; update the URL
+  after changing networks.
+- **The cloud second opinion needs internet.** It is advisory, so losing it
+  never affects detection — it just shows no opinion.
 - **GPS is not implemented** — coordinates in `config.yaml` are hardcoded,
   by design (a GPS module will not lock indoors, per `plan.md` section 1).
 

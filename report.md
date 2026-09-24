@@ -5,9 +5,9 @@
 | | |
 |---|---|
 | **Deadline** | 30 August 2026 |
-| **Report date** | 6 September 2026 |
+| **Report date** | 6 September 2026; Phase 13 addendum 24 September 2026 |
 | **Owner** | Solo build |
-| **Status** | Phases 0–11 complete; this document is Phase 12 |
+| **Status** | Phases 0–13 complete. Sections 1–12 are the Phase 12 report as written; Section 13 covers the Phase 13 two-board migration |
 
 ---
 
@@ -30,6 +30,17 @@ along with two hardware/environmental findings (a loose buzzer connection,
 and camera autofocus transients briefly inflating fire confidence). All
 findings are reported here as measured, not smoothed over.
 
+**Phase 13 addendum (Section 13).** After the original report, the build
+moved to two WiFi boards: an ESP32-CAM streaming video through a relay,
+and an ESP32 sensor board that owns its own baseline, thresholds and
+buzzer. The migration uncovered two silent failures in the gas path — a
+parser that dropped every line from the new firmware, and host-side
+thresholds that would have produced a false alarm on MQ-2 and a missed
+detection on MQ-135 at the same time — both fixed and measured. An AWS
+Lambda running the same v4 model now gives an advisory second opinion
+(bit-identical `p_fire` to local on the reference frame), and the
+dashboard was rebuilt around the live camera and sensor feed.
+
 ---
 
 ## Table of Contents
@@ -46,6 +57,7 @@ findings are reported here as measured, not smoothed over.
 10. [Ethics and Safety](#10-ethics-and-safety)
 11. [Limitations](#11-limitations)
 12. [Future Work](#12-future-work)
+13. [Phase 13: Two-Board Migration](#13-phase-13-two-board-migration)
 
 ---
 
@@ -243,7 +255,8 @@ independent of the agent's own server) expose five tabs: Overview, Live
 Incidents, Historical Archive (S3), Evaluation Trials, and Nearest Fire
 Station. Built as a deviation from `plan.md`'s original Streamlit
 specification, per explicit developer instruction, prioritizing visual
-polish.
+polish. *Superseded in Phase 13: four tabs with a live-first home page —
+see Section 13.5.*
 
 ---
 
@@ -447,6 +460,10 @@ the correct condition is what is reported.
 
 ## 8. Hardware Status
 
+*This section is the Phase 11 hardware as trialled. The Arduino Uno and
+webcam were retired in Phase 13; the current two-board hardware is in
+Section 13.3.*
+
 | Item | Status |
 |---|---|
 | Arduino Uno R3 | Working; alarm sketch ('A'/'S' → D8) confirmed live |
@@ -541,7 +558,10 @@ system as built:
    screen showing fire footage reliably triggers vision-side WARNING
    (6 alarms on the standard adversarial clip on v4); bounded by fusion
    design so it can never reach CRITICAL without gas corroboration, but
-   not eliminated at the model level.
+   not eliminated at the model level. *Phase 13 lowered `votes_needed`
+   from 5 to 3 for the slower ESP32-CAM stream, which reopened this; the
+   developer re-ran it on the ESP32-CAM and reported it passing
+   (Section 13.6 — count not yet recorded).*
 4. **Steam sustained smoke-WATCH events.** Reduced from 21 (v3) to 5
    (v4) but not eliminated — steam remains a known, if much-improved,
    smoke false-positive source.
@@ -563,13 +583,33 @@ system as built:
 10. **Twilio voice calling dropped from scope** — trial-tier accounts
     gate every call behind an interactive "press any key" prompt that
     defeats a one-way informational call; SMS remains fully in scope.
-11. **Warm-up gate does not persist across process restarts** — a
+11. **Warm-up gate does not persist across process restarts** *(resolved
+    in Phase 13: the sensor board now runs its own slope-based warm-up
+    gate, which survives any host restart; the host timer applies only
+    on the legacy-firmware fallback path)* — a
     tooling gap discovered while running Phase 11 trials (see Section
     12); each trial subprocess resets the 240-second gas warm-up timer
     from zero rather than tracking real elapsed sensor uptime. Not a
     production issue (a real deployment does not restart the process
     mid-operation), but it did require deliberately waiting out the gate
     on every gas-dependent trial during evaluation.
+
+Phase 13 adds these (details in Section 13.7):
+
+12. **ESP32-CAM IP is hardcoded** in `camera.stream_url` — the camera is
+    a server and cannot use the sensor board's host discovery.
+13. **GC2145 camera sensor.** The module shipped with a GC2145 clone
+    sensor rather than the planned OV2640; its colour response differs
+    from the webcam the model was trained around.
+14. **Sensor-board movement sensitivity.** Moving the board causes
+    reading jumps (cause unconfirmed). Mitigated by fixed mounting and
+    the firmware's 3-of-5 vote, not engineered away.
+15. **MQ-135 calibration delta trend.** The three stimulus runs behind
+    `MQ135_CALIBRATED_DELTA` trended upward (485 → 566 → 665),
+    suggesting incomplete recovery between exposures; the mean is used
+    and the question is flagged unresolved.
+16. **The cloud second opinion needs internet.** It is advisory, so
+    losing it never affects detection.
 
 ---
 
@@ -584,8 +624,9 @@ system as built:
   models are promoted by manual file copy.
 - **GPS integration** — revisit once outdoor/near-window deployment is a
   target scenario where a satellite lock is achievable.
-- **Persist the gas warm-up timer across process restarts** — the
-  tooling gap found in Section 11, item 11. Fixing it properly means
+- ~~**Persist the gas warm-up timer across process restarts**~~ —
+  resolved by Phase 13 (the board owns the gate). The original note,
+  kept for the record: the tooling gap found in Section 11, item 11. Fixing it properly means
   writing `SensorReader`'s first-valid-reading timestamp somewhere
   durable (a small state file) rather than in-process memory, which
   touches the safety-critical edge loop and would need a full live
@@ -598,3 +639,120 @@ system as built:
   the existing threshold sweeps, and — if the hypothesis holds — targeted
   near-black hard negatives added to training, mirroring exactly the
   process that fixed the bright-wall smoke issue in v4.
+
+---
+
+## 13. Phase 13: Two-Board Migration
+
+*Addendum, 24 September 2026. Every number in this section was measured
+and is recorded in `logs.md` (Phase 13a–13h). Where the developer ran a
+test and reported the outcome without supplying a number, the table says
+so rather than filling one in (`info.md` §2.4).*
+
+### 13.1 What changed and why
+
+A faculty-suggested extension replaced the webcam + Arduino Uno with two
+WiFi boards:
+
+- **ESP32-CAM (camera board)** streams MJPEG. It serves one client at a
+  time, so a relay in the dashboard backend holds that single connection
+  and fans frames out to the edge loop and every dashboard viewer.
+- **ESP32 DevKit (sensor board)** reads MQ-2/MQ-135, captures a fresh
+  baseline every boot after a slope-based warm-up gate, derives WARN/DANGER
+  from ratio thresholds, tracks slow drift, keeps absolute hard ceilings,
+  and **sounds its own buzzer on its own verdict**. It POSTs one reading
+  per second to an ingest server inside the edge loop, discovering the
+  host by subnet scan so it moves between networks with no reflash.
+
+The planned cloud inference was **not** adopted as the detector: local
+ONNX inference stays primary, and the Lambda became an advisory second
+opinion (13.4). The core claim survives and is stronger: the gas alarm
+now needs neither WiFi nor the laptop.
+
+### 13.2 Findings from the migration
+
+| Finding | Measured |
+|---|---|
+| Gas detection was **silently dead** on the new firmware: the parser required exactly 2 CSV fields, the board sends 3 or 9 | Every line dropped; readings `None` forever while the process looked healthy |
+| Host-side config thresholds vs the board's live values (same session) | MQ-2: clean air read 119, above config warn 115.57 → **continuous false alarm**. MQ-135: config warn 98.77 vs live warn 31.86 → **real gas never detected** |
+| `votes_needed` on the ~7–8 fps ESP32-CAM stream (alarm / p_fire-hit ratio) | 0.13 at N=5 vs 1.09 at N=3 (webcam at N=5: 1.17) → production set to 3 |
+| Camera relay fan-out | 3 simultaneous viewers each received 27 identical frames from exactly one upstream connection |
+| Edge loop reading through the relay | 6.5 fps at 320×240, matching the board's native rate |
+| WiFi killed mid-gas-alarm | Board buzzer kept sounding throughout; host degraded to `gas_high=False` and recovered |
+| Dashboard threshold lines (Phase 13h) | Previous boot's thresholds shown after a board reboot, and config values shown during warm-up; fixed by carrying thresholds on every sample |
+
+The fix for the second row: the board's `GAS_HIGH` state is now the gas
+verdict. Config.yaml's gas values are a fallback for legacy firmware only.
+
+### 13.3 Hardware (current)
+
+| Item | Status |
+|---|---|
+| ESP32 DevKit sensor board | Working over WiFi on home network and phone hotspot; USB-free (phone-powered) operation verified |
+| MQ-2 (GPIO34), MQ-135 (GPIO35) | Via 22k/10k dividers (5 V → 3.3 V ADC); thresholds computed per boot by firmware |
+| Buzzer (GPIO33) | Driven by the board's own GAS_HIGH; verified sounding with WiFi down |
+| AI-Thinker ESP32-CAM | Working through the relay; GC2145 sensor (not the planned OV2640) |
+| Arduino Uno, webcam | Retired |
+| DHT22 | Still cut from scope |
+
+### 13.4 Cloud second opinion
+
+On the rising edge of GAS_HIGH, the current frame goes to an AWS Lambda
+(ap-south-1, IAM-signed Function URL) running the same v4 model. The
+dashboard shows local and cloud side by side with an agree/disagree state.
+It runs on a background thread after the local alarm and never feeds
+fusion.
+
+| Measurement | Result |
+|---|---|
+| `p_fire`, local vs Lambda, reference frame | 0.998336017131805 both — bit-identical (ORT 1.29 local vs 1.20.1 Lambda; worst deviation anywhere 3e-06) |
+| Planned 5-crop MAX rule vs full frame (val, 150/class) | Full frame @0.30: recall 0.980, neutral FP 0.000. 5-crop MAX @0.30: recall 0.993, neutral FP 0.180 → **rule rejected**, crops kept as diagnostics |
+| Pillow instead of OpenCV for resize | Verdict flipped on 8 of 400 frames (2%) → OpenCV kept |
+| JPEG quality for the upload (300 val frames) | q80 1.0% verdict flips, q90 1.0%, q95 0.3% → q95 |
+| Package size | 236.9 MB of the 250 MB limit |
+| Latency | ~23 ms warm locally, 722 ms cold on Lambda |
+
+Cost guards are client-side (rising edge, 60 s cooldown, 20 calls per
+session) because the account's concurrency quota left no room to reserve
+concurrency; it is off by default, and `scripts/deploy_lambda.py --delete`
+removes every billed resource. Item B (S3-triggered re-scoring) was cut:
+the archive holds no real CRITICAL snapshots to re-score.
+
+### 13.5 Dashboard
+
+Four tabs. The home page is fed by one 1 Hz WebSocket and shows, in
+order: a status strip (live level, edge-feed age, board state, camera,
+threshold source, last incident), the live camera with a relay-driven
+LIVE/SIGNAL LOST overlay, per-sensor bullet bars against the board's
+thresholds, a gas chart with a **hazard-index** view (each reading scaled
+to its own sensor's thresholds: baseline 0, warn 1, danger 2) and a raw
+view with step-traced thresholds, the nearest fire station, the cloud
+second opinion, and incident history.
+
+### 13.6 Re-verification on the two-board hardware
+
+The developer ran these on 24 September 2026 and reported all passing.
+
+| Test | Outcome | Numbers |
+|---|---|---|
+| Offline — WAN down | Reported pass | Not yet recorded |
+| Offline — WiFi down | Reported pass | Not yet recorded |
+| End-to-end latency | Reported pass | Not yet recorded |
+| TV/laptop fire footage on the ESP32-CAM (bar ≤ 2 alarms) | Reported pass | Not yet recorded |
+| Evaluation trials on two-board hardware | Reported pass | Not yet recorded |
+| Phase 8b Telegram/Twilio drills | Reported pass | Not yet recorded |
+| v4 textured-wall re-check | Reported pass | Not yet recorded |
+| Airflow disturbance | Reported pass | Not yet recorded |
+| Dashboard in a browser | Reported pass | Not yet recorded |
+
+### 13.7 Not verified / open
+
+- **Dashboard threshold fix on real hardware (Phase 13h):** built and
+  checked against synthetic data only. The board-reboot check (warm-up
+  shading, then new lines, never the previous boot's) is outstanding.
+- Firmware was never compile-checked on the development machine
+  (`arduino-cli` unavailable); both boards were flashed and ran.
+- Lambda binaries were never executed locally (no Linux runtime); proven
+  by the deploy itself.
+- The CloudWatch "one invocation per gas event" check was not recorded.
+

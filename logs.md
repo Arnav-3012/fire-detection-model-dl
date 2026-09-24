@@ -12650,3 +12650,101 @@ and force-pushed (`--force-with-lease` against the known remote head,
 exactly 11 redacted lines. The old head `2cbc4ff` stays reachable on
 GitHub by exact hash until GitHub garbage-collects it. A GitHub
 sensitive-data support request purges it sooner.
+
+## Phase 13h — stale dashboard thresholds fixed; home page rebuilt live-first (2026-09-24)
+
+### The chart was drawing thresholds from another boot
+
+Stage 5 made the dashboard prefer the board's thresholds over config.yaml's,
+but it did so through a sidecar file (`data/live_sensors_thresholds.json`)
+that `edge/main.py` wrote **only when the values changed** and nothing ever
+cleared. Both readers (`SensorReader`, `WifiSensorSource`) also keep their
+last thresholds across a board reboot. So:
+
+- **After a board reboot**, the board is in WARMUP and publishes nothing,
+  and the chart kept drawing the **previous boot's** lines as if live.
+- **With no sidecar** (warm-up, legacy firmware), the chart silently drew
+  config.yaml's 10-bit Arduino-era values (MQ-2 warn 115.57) under the same
+  labels. The live 12-bit board computes warn values in the hundreds.
+- Thresholds were drawn as **flat lines across the whole 10-minute window**,
+  although the firmware's EMA baseline moves them and every boot
+  re-baselines. Old samples were judged against the current threshold.
+- Both sensors shared one y-axis despite different scales; the four dotted
+  lines interleaved and differed only in alpha.
+
+**Fix: thresholds and board state ride on every live sample.**
+`livelog.record()` takes `state` and `thresholds`; each 1 Hz sample now has
+`"state"` and `"thr"` (firmware key names, `null` while the board has no
+baseline). `edge/main.py` withholds thresholds while the state is WARMUP or
+BASELINE_CAPTURE, because the readers' cached values belong to the previous
+boot. The sidecar writer (`_publish_thresholds`) and reader are deleted, so
+a threshold can only ever be drawn next to the reading it applied to, and
+staleness follows the sample timestamp the dashboard already checks.
+
+The backend payload gains `threshold_source` (`firmware` / `pending` /
+`none`), `board_state`, and `camera` (relay liveness). **config.yaml's gas
+thresholds are no longer sent to the dashboard at all**; config.yaml's
+comment now says so. REST and WebSocket still share one builder.
+
+### Home page rebuilt around the live feed
+
+Live View and Nearest Fire Station folded into Overview (6 tabs → 4). The
+home page is on the `/ws/live` socket only; the 3 s REST poll of the same
+payload is gone. Order: status strip → camera + "right now" readout → gas
+chart + fire station + most recent event → cloud second opinion → incident
+history. New components: `StatusStrip`, `CameraFeed`, `LiveReadout`,
+`GasChart`, `FusionTimeline` (moved out of Overview unchanged). Shared
+helpers in `live.js` (staleness, board-state labels, hazard index) replace
+the two copies of `LIVE_STALE_MS`/`isStale` that Overview and LiveView kept.
+
+- **Hazard index** (`live.js:hazardIndex`): piecewise-linear, baseline → 0,
+  warn → 1, danger → 2, continuing at the warn→danger slope. Built from each
+  sensor's own thresholds at that second, so both sensors share one axis
+  and one warn/danger line is correct for both, whatever formula the
+  firmware used. Default chart view; **Raw ADC** view shows two lanes with
+  thresholds as step (`hv`) traces and zone fills. Warm-up spans are shaded
+  and labelled.
+- **Camera liveness comes from the relay, not the `<img>`.** An MJPEG image
+  whose upstream died freezes on its last frame and looks live; the overlay
+  reads the payload's `camera.live` / `age_seconds` instead. The stream is
+  dropped while the browser tab is hidden.
+- The System Health ring's percentage (`100 − level × 33`) was not a
+  measurement and is gone; the status strip shows real values instead.
+- Deleted: `tabs/LiveView.jsx`, `tabs/FireStation.jsx`,
+  `components/LiveSensorChart.jsx`, and their dead CSS.
+
+### Verified
+
+- `oxlint` clean for the new code; `vite build` passes.
+- Rendered in headless Chrome against a **mock backend with synthetic data**
+  (scratch only, not in the repo) at 1400 px and 600 px: SAFE, CRITICAL
+  (strip and camera takeover), hazard and raw views, warm-up shading.
+- Python files parse; no remaining reference to the sidecar.
+
+### NOT verified
+
+- **Never run against the real board.** The check that matters: reboot the
+  board mid-session and confirm the chart shows the warm-up shading, then
+  new lines, and never the previous boot's. Samples written before the
+  edge loop restart carry no `thr`, so the chart reads "board is not
+  publishing thresholds" until fresh samples arrive.
+- Camera SIGNAL LOST overlay not exercised against a real unplugged
+  ESP32-CAM.
+- `data/live_sensors_thresholds.json` is now unused and can be deleted.
+
+## Phase 13 closed — documentation pass (2026-09-24)
+
+README, ARCHITECTURE.md, context.md, report.md, phase12.md and
+config.example.yaml updated for the two-board build, the cloud second
+opinion and the new dashboard. config.example.yaml gained the
+`sensors.transport`/ingest keys, the `camera` block and
+`aws.second_opinion` (endpoint left as SET YOUR OWN).
+
+The developer reported, 2026-09-24, running every outstanding
+re-verification on the two-board hardware and all passing: offline (WAN
+down and WiFi down), end-to-end latency, the TV/laptop re-test on the
+ESP32-CAM (the question `votes_needed` 5 → 3 reopened), the evaluation
+trials, Phase 8b's Twilio/Telegram drills, the v4 textured-wall re-check,
+airflow, and the dashboard in a browser. **No per-run numbers were
+supplied, so none are recorded here** (info.md 2.4). report.md §13 marks
+each as reported-pass with its number pending.

@@ -28,6 +28,9 @@ to guess which file that is.
                                           ▼
                           1. Local buzzer + LED — fires unconditionally, before any network call
                           2. POST /incident (best-effort, 2s timeout, never blocks step 1)
+                          3. Cloud second opinion on a GAS_HIGH rising edge — advisory,
+                             background thread, result to a sidecar the dashboard reads,
+                             NEVER back into fuse() (cloud/second_opinion.py → Lambda)
                                           │
                                           ▼
                            agent/graph.py (LangGraph state machine)
@@ -46,8 +49,8 @@ bring-up). Two deliberate asymmetries:
 - The **sensor ingest server runs inside `edge/main.py`**, not the
   dashboard backend, so the detector never depends on an optional
   dev-time process.
-- The **camera relay runs inside the dashboard backend**, so Live View
-  keeps working when the edge loop is stopped. The edge loop reads frames
+- The **camera relay runs inside the dashboard backend**, so the
+  dashboard's live camera keeps working when the edge loop is stopped. The edge loop reads frames
   *through* that relay (`camera.edge_source`) rather than connecting to
   the board, because `cam_node.ino` serves exactly one client at a time.
 
@@ -68,8 +71,8 @@ only ever phrases a sentence about a decision already made. See
 |---|---|
 | `edge/` | Always-running local loop: camera, vision, sensors, fusion, buzzer/LED. Detection only — never calls out. |
 | `agent/` | Response only, triggered after detection. LangGraph state machine, LLM compose, Telegram/Twilio, simulated dispatch. |
-| `cloud/` | S3 archive upload, CRITICAL incidents only. |
-| `dashboard/` | Read-only FastAPI backend + React frontend. Never writes to edge/agent state. |
+| `cloud/` | S3 archive upload (CRITICAL incidents only), and the advisory second-opinion client + Lambda handler (`lambda_infer/`, preprocessing shared with `edge/vision.py`). Never on the detection path. |
+| `dashboard/` | Read-only FastAPI backend (+ camera relay, `/ws/live`) and React frontend. Never writes to edge/agent state. |
 | `train/`, `models/` | Dataset prep, training, ONNX export. `models/` is gitignored (checkpoints). |
 | `eval/` | Adversarial video tests, threshold sweeps, per-trial logging. |
 | `arduino/` | Firmware for each physical board (sensor node, cam node, calibration capture, buzzer test). |
@@ -93,7 +96,7 @@ root-level docs form one system; **`info.md` §0 is the canonical read order**
 | [`plan.md`](plan.md) | You need the specification: architecture rationale, hardware BOM/pin maps, data collection plan, schedule, troubleshooting appendix. This is the authority on *what should be true*. | A record of what actually happened (that's `logs.md`) |
 | [`logs.md`](logs.md) | You need historical detail: exact past measured numbers, full reasoning behind a past decision, resolving a conflict `context.md` can't settle. Append-only, never overwritten — the record of *what was actually built*. Large; don't read by default (`info.md` §0). | Quick orientation (that's `context.md`) or the spec (that's `plan.md`) |
 | [`report.md`](report.md) | Writing or referencing the final project report/deliverable (Phase 12). | Day-to-day build decisions — those belong in `logs.md` |
-| `phase12.md` / `chat2.md` | Continuing the *current in-flight* hardware/architecture update (ESP32 migration). Session-scoped working checklists, not permanent project memory — they go stale and should be deleted or folded into `plan.md`/`logs.md`/`context.md` once that phase closes. | Anything that should outlive this one update phase |
+| `phase12.md` / `chat2.md` / `additiontoplan.md` / `dashboard_redesign.md` | Session-scoped working docs for Phase 13 (ESP32 migration, cloud second opinion, dashboard redesign). **Phase 13 closed 2026-09-24**; their conclusions are folded into `logs.md`/`context.md`/`report.md`, and they are kept only as the working record. | Anything current — use `context.md` |
 
 **Authority order when sources conflict** (`info.md` §1): developer's current
 message → `plan.md` (spec) → `info.md` (rules) → `logs.md` (history) → your
@@ -109,7 +112,8 @@ own judgment, last.
 | `eval/results.csv` | Hazard/non-hazard trial outcomes and latency — source of truth for report numbers | `eval/run_trial.py` | No |
 | `eval/alert_feedback.csv` | Append-only outcome log for agent responses | `agent/feedback.py` | No |
 | `eval/calibration/*.csv` | Raw MQ sensor calibration measurements | `tools/calibrate_sensors.py`, `eval/calibrate_mq.py` | No |
-| `data/live_sensors.json` | 1 Hz live snapshot for the dashboard's live chart | `edge/livelog.py` | No |
+| `data/live_sensors.json` | 1 Hz rolling live snapshot (10 min). Each sample: readings, `p_fire`, fused level, board state, and the board's thresholds in force at that second (`thr`, null during warm-up). The dashboard's only threshold source. | `edge/livelog.py` | No |
+| `data/live_sensors_second_opinion.json` | Latest cloud second-opinion results + history, for the dashboard | `cloud/second_opinion.py` | No |
 | `baseline_history.json` | Active MQ sensor boot-baseline tracking, current calibration session | Manually maintained (see `logs.md`) | No |
 | `logs/hardware_trials/` | Superseded side-by-side comparison run logs (`esp32_run*.log`, `webcam_run*.log`, `continuous_log.csv`) — kept for the reasoning trail in `logs.md`, not live data | Manual capture during hardware trials | No (whole `logs/` dir gitignored) |
 | `logs/archive/` | Superseded snapshots kept only for historical reference (e.g. `baseline_history_old_fixed_gate_*.json`) — explicitly retired, do not resume writing to these | Manual archival | No |

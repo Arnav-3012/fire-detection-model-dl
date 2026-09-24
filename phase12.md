@@ -13,9 +13,8 @@ Phase 13 entries (history — read those before touching hardware/firmware, not
 this file). This file will go stale as work completes — update it or delete
 it once the update phase closes, don't let it drift into a second plan.md.
 
-**Status as of 2026-09-16:** ESP32-CAM (camera board) flashed and confirmed
-working. Plain ESP32 DevKit (sensor board) wired and confirmed working via
-Serial Monitor, burn-in in progress. Nothing past that is built.
+**Status: CLOSED 2026-09-24** — see the checklist at the end. Sections 0-13
+below are the original 2026-09-16 plan, kept unedited as the record.
 
 ---
 
@@ -287,16 +286,20 @@ don't just pick one.
 
 ## Quick checklist (same order as above)
 
-- [ ] 1. Burn-in confirmed stable
-- [ ] 2. Calibration-formula question decided (10-bit reuse vs. re-derive)
-- [ ] 3. MQ calibration run on new hardware, `config.yaml` updated
-- [ ] 4. Airflow false-positive mitigation decided and implemented
-- [ ] 5. Sensor-board (plain ESP32) firmware written
-- [ ] 6. Camera-board (ESP32-CAM) firmware written
-- [ ] 7. AWS Lambda inference endpoint built
-- [ ] 8. Backend fusion + WebSocket endpoint built
-- [ ] 9. Dashboard "Live View" tab built
-- [ ] 10. Vision pipeline tested (latency, offline/gas-only, adversarial, cost)
-- [ ] 11. Sensor pipeline tested (gas trigger + airflow-mitigation verification)
-- [ ] 12. Evaluation-trial re-run scope decided and run
-- [ ] 13. Documentation closed out (report.md, context.md, logs.md)
+**PHASE CLOSED 2026-09-24.** Every item below is done. This file is kept
+as the working record only; current state lives in `context.md`, history
+in `logs.md` (Phase 13a-13h).
+
+- [x] 1. Burn-in confirmed stable — logs.md Phase 13b sessions 1-2
+- [x] 2. Calibration-formula question decided — superseded: per-boot baselines, then **ratio** WARN/DANGER thresholds computed by the firmware (logs.md "WARN/DANGER switched from absolute-delta to RATIO-based thresholds")
+- [x] 3. MQ calibration run on new hardware — firmware-owned; config.yaml gas values are now a legacy fallback only
+- [x] 4. Airflow false-positive mitigation — firmware 3-of-5 vote window (a real gas rise holds above WARN for ~39 s; a disturbance spike is brief), plus fixed mounting. Developer re-tested airflow 2026-09-24: reported pass
+- [x] 5. Sensor-board (plain ESP32) firmware written — `arduino/sensor_esp32_node`
+- [x] 6. Camera-board (ESP32-CAM) firmware written — `arduino/cam_node`
+- [x] 7. AWS Lambda endpoint built — **as an advisory second opinion, not the detector**: local ONNX inference stayed primary (logs.md Phase 13g)
+- [x] 8. Backend WebSocket endpoint built — `/ws/live`; fusion stayed in `edge/` (Phase 13f)
+- [x] 9. Dashboard live view built — Phase 13f tab, then folded into the home page (Phase 13h)
+- [x] 10. Vision pipeline tested — developer-run 2026-09-24, reported pass; numbers not yet recorded
+- [x] 11. Sensor pipeline tested — developer-run 2026-09-24, reported pass; numbers not yet recorded
+- [x] 12. Evaluation-trial re-run — developer-run on two-board hardware 2026-09-24, reported pass; numbers not yet recorded
+- [x] 13. Documentation closed out — 2026-09-24 (report.md §13, context.md regenerated, logs.md)

@@ -49,8 +49,6 @@ vision.py are untouched.
 
 import argparse
 import base64
-import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -140,29 +138,6 @@ def format_status(
     )
 
 
-def _publish_thresholds(live_log_path: Path, thresholds: dict[str, float]) -> None:
-    """Write the firmware's live thresholds beside the live-log file.
-
-    Atomic replace (write .tmp, os.replace) for the same reason
-    livelog.py does it: the dashboard polls this file and must never read
-    a half-written document.
-
-    Failure contract (info.md 3.2): a write problem logs one warning and
-    the loop continues. This is dashboard cosmetics — it may never
-    interrupt detection.
-    """
-    path = live_log_path.with_name(live_log_path.stem + "_thresholds.json")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(thresholds))
-        os.replace(tmp, path)
-        print(f"Published firmware thresholds to {path} ({thresholds})")
-    except OSError as exc:
-        print(f"WARNING: could not publish firmware thresholds ({exc}); "
-              f"dashboard will fall back to config.yaml values")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="FireWatch edge loop")
     parser.add_argument(
@@ -231,9 +206,6 @@ def main() -> None:
         reader = SensorReader()
     reader.start()  # never raises; a dead transport degrades to None readings
     live_log = LiveLogWriter()
-    live_log_path = Path(config["live_log"]["path"])
-    # Last thresholds written to the sidecar; only a CHANGE triggers a write.
-    published_thresholds: dict[str, float] = {}
     live_log.start()  # dashboard live-view only; all file I/O on its own thread
     # Stage 6c. Advisory only: its result goes to a sidecar file for the
     # dashboard and has no path back into fuse(). Disabled = inert.
@@ -422,20 +394,21 @@ def main() -> None:
             # a JPEG encode + network POST (too expensive for 30 FPS); this
             # call was already unconditional and near-free before this
             # change, so recording every level costs nothing new.
-            live_log.record(readings["mq2"], readings["mq135"], float(result["p_fire"]), level.name)
-
-            # Publish the board's OWN thresholds for the dashboard (Stage 5).
-            # Written rarely — only when they change, which is once per boot
-            # after baseline capture — so this costs nothing at 30 FPS. The
-            # dashboard is a separate process and must not reach into this
-            # one, so a small sidecar file is the decoupled way to share
-            # them. Without this the dashboard draws config.yaml's stale
-            # 10-bit Arduino-era threshold lines, which disagree with what
-            # the board is actually using (see Stage 2).
-            live_thresholds = reader.thresholds() if hasattr(reader, "thresholds") else {}
-            if live_thresholds and live_thresholds != published_thresholds:
-                published_thresholds = live_thresholds
-                _publish_thresholds(live_log_path, live_thresholds)
+            #
+            # The board's thresholds ride on the SAME sample (2026-09-24),
+            # replacing the old write-on-change sidecar file. The sidecar
+            # was never cleared, so after a board reboot the dashboard kept
+            # drawing the previous boot's lines. Per-sample, a threshold
+            # can only ever be shown next to the reading it applied to.
+            # The readers keep their last thresholds across a reboot, so
+            # they are withheld here while the board has no baseline.
+            live_thresholds = None
+            if state not in (None, "WARMUP", "BASELINE_CAPTURE") and hasattr(reader, "thresholds"):
+                live_thresholds = reader.thresholds() or None
+            live_log.record(
+                readings["mq2"], readings["mq135"], float(result["p_fire"]), level.name,
+                state=state, thresholds=live_thresholds,
+            )
 
             frame_count += 1
             if frame_count % FPS_REPORT_EVERY == 0:

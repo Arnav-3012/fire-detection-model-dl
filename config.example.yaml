@@ -17,12 +17,30 @@ vision:
   smoke_decision_threshold: 0.45  # a frame is "smoke" only if smoke is the argmax winner AND P(smoke) >= this. Set 2026-09-04 from eval/smoke_threshold_sweep.py on v3: argmax alone let smoke win 3-way splits at P(smoke) 0.28-0.44 (live spurious WATCH states); 0.45 removes that band at a val cost of 1 smoke image in 880 on v3. Re-verified on v4 (production, 2026-09-04 sweep): smoke recall 0.8511 at this argmax-AND rule — clears info.md 4.1's 0.85 block bar for the first time (v3 was 0.8284, below it); val smoke FP 109. See logs.md "Smoke decision threshold" and "Phase 2 addendum — v4 promotion decision".
   frame_threshold: 0.70           # tau — per-frame confidence threshold for the Day 4 TemporalVoter (edge/vision.py, live since Phase 4), plan.md 6.1 initial value. Distinct from fire_decision_threshold above.
   window: 8                       # M — rolling window size in frames (~1s at 8 FPS), plan.md 6.1 initial value
-  votes_needed: 3                 # N — votes required within window. CHANGED from plan.md 6.1's initial value of 5 to 3 on 2026-09-17 (Phase 13a-2): the edge loop's camera source is now permanently the ESP32-CAM stream (~7-8fps, not the ~30fps webcam Phase 5's tuning assumed), and at votes_needed=5 the alarm/p_fire-hit conversion ratio on that stream was 0.13 (votes rarely accumulated fast enough) vs 1.09 at votes_needed=3 -- confirmed via live side-by-side comparison logs (webcam_run*.log / esp32_run*.log). NOTE: this reopens Phase 5's TV/laptop-fire false-positive question (logs.md "votes_needed sweep" — production was deliberately held at 5 after a 5-8 sweep found no value that also cleared the TV/laptop <=2 bar) since that sweep was run against the webcam path, not the ESP32-CAM. Re-running the TV/laptop hard-negative eval against the ESP32-CAM source is the correct next validation step before treating this as fully closed.
+  votes_needed: 3                 # N — votes required within window. CHANGED from plan.md 6.1's initial value of 5 to 3 on 2026-09-17 (Phase 13a-2): the edge loop's camera source is now permanently the ESP32-CAM stream (~7-8fps, not the ~30fps webcam Phase 5's tuning assumed), and at votes_needed=5 the alarm/p_fire-hit conversion ratio on that stream was 0.13 (votes rarely accumulated fast enough) vs 1.09 at votes_needed=3 -- confirmed via live side-by-side comparison logs (webcam_run*.log / esp32_run*.log). NOTE: this reopens Phase 5's TV/laptop-fire false-positive question (logs.md "votes_needed sweep" — production was deliberately held at 5 after a 5-8 sweep found no value that also cleared the TV/laptop <=2 bar) since that sweep was run against the webcam path, not the ESP32-CAM. The TV/laptop hard-negative eval was re-run by the developer against the ESP32-CAM source (2026-09-24, reported passing; per-run alarm counts to be recorded in logs.md).
   smoke_votes_needed: 5           # N for the smoke TemporalVoter (edge/vision.py, added 2026-09-04): smoke's per-frame argmax-AND flag now needs this many votes in the same `window` before fuse() sees smoke (WATCH, or CRITICAL with gas). Deliberately equal to fire's votes_needed: the observed live failure was isolated single frames (any N>=2 removes it), smoke also sits on the rule-1 CRITICAL path so it must not be looser than fire, and no smoke adversarial sweep exists yet to justify a different value (plan.md 6.1: tune on clips, not intuition). Separate key so it can be swept without touching fire. See logs.md "Smoke temporal voting".
 
 sensors:
-  serial_port: "SET YOUR OWN"      # EXAMPLE was "/dev/cu.usbmodem141011" (macOS). Machine-specific — find yours via Arduino IDE, Tools -> Port (macOS: /dev/cu.usbmodem*, Linux: /dev/ttyACM*/ttyUSB*, Windows: COM*)
+  # Transport for sensor readings: "wifi" (the ESP32 sensor board POSTs one
+  # JSON reading per second to the edge loop) or "serial" (USB CSV, kept as
+  # the bring-up fallback). Both expose the identical interface
+  # (edge/wifi_source.py), so switching is this one key, no code change.
+  transport: "wifi"
+  ingest_host: "0.0.0.0"         # wifi only. The ingest server runs INSIDE edge/main.py (not the dashboard backend), so the detector never depends on an optional process. 0.0.0.0 = reachable from the board over the LAN
+  ingest_port: 8002              # wifi only. Distinct from agent 8000 / dashboard 8001
+  ingest_stale_seconds: 5.0      # wifi only. Readings older than this read as None (=> gas_high False). HTTP has no dead-peer signal the way a serial port does, so this is what stops a frozen last reading from looking healthy forever
+  serial_port: "SET YOUR OWN"      # serial only. EXAMPLE was "/dev/cu.usbserial-0001" (macOS, ESP32 DevKit's USB-serial chip). Find yours with `ls /dev/cu.usbserial*` (macOS), /dev/ttyUSB* (Linux), COM* (Windows)
   baud: 9600                      # plan.md 8, Day 6 prompt
+  # -----------------------------------------------------------------------
+  # GAS THRESHOLDS BELOW ARE FALLBACK ONLY (Phase 13f, 2026-09-23).
+  # The ESP32 sensor firmware captures its own baseline every boot, computes
+  # WARN/DANGER from ratio thresholds, and publishes both its verdict (the
+  # GAS_HIGH state) and the six live thresholds. edge/main.py uses the
+  # board's verdict; the dashboard draws the board's thresholds. These
+  # 10-bit Arduino-era values are read ONLY by edge/fusion.py's fallback
+  # path for legacy firmware that sends no state field. Do not treat them
+  # as the operating thresholds of the current hardware.
+  # -----------------------------------------------------------------------
   mq2_baseline: 57.1               # CALIBRATED 2026-08-31. Clean-air reading before the unlit gas-stove release trial (peak=252). Previously only lived as a comment on mq2_warn below (schema gap) — added here as a real key for the dashboard's live-sensor chart y-axis (2026-09-04, see logs.md).
   mq2_warn: 115.57                # CALIBRATED 2026-08-31. baseline=57.1, peak=252 (unlit gas-stove release ~20cm, ~5s). Formula: baseline + 0.30 * (peak - baseline), plan.md 5.5. See logs.md Phase 6 calibration entry
   mq2_danger: 174.04               # CALIBRATED 2026-08-31. Same baseline/peak as mq2_warn. Formula: baseline + 0.60 * (peak - baseline), plan.md 5.5
@@ -52,10 +70,25 @@ agent:
   twilio_timeout_seconds: 10      # per Twilio REST request (SMS only — the call is out of scope, agent/escalate.py). Failure logs a warning and continues — Telegram has already been sent by then
   feedback_log: "eval/alert_feedback.csv"  # Phase 8b RL-shaped feedback log, append-only. CSV to match eval/calibration/'s existing pattern. Data collection ONLY — no RL is built or implied (info.md 2.4)
 
+camera:                            # Phase 13f: ESP32-CAM relay (edge/camrelay.py, runs in the dashboard backend)
+  # MJPEG URL of the ESP32-CAM. Empty = camera endpoints disabled. The board
+  # serves ONE client at a time, so the dashboard backend holds that single
+  # connection and fans frames out to every viewer and to the edge loop.
+  # The IP changes between networks/reboots — check the cam board's serial
+  # monitor. (The camera is a server, so the sensor board's mDNS/subnet-scan
+  # discovery does not apply to it.)
+  stream_url: "SET YOUR OWN"       # EXAMPLE: "http://192.168.1.12/stream"
+  stale_seconds: 5.0               # a frame older than this reports not-live (camera status, home-page overlay, 503 from /api/camera/snapshot)
+  # Where edge/main.py reads frames when --video-source is not passed. Point
+  # it at the RELAY, not the board, so the edge loop and dashboard can both
+  # see the camera. This means the dashboard backend must be started BEFORE
+  # edge/main.py. Empty = laptop webcam (development only).
+  edge_source: "http://127.0.0.1:8001/api/camera/stream"
+
 live_log:                          # Phase 11: 1 Hz rolling live-readings buffer for the dashboard's live chart (edge/livelog.py)
   path: data/live_sensors.json     # atomic-replace JSON snapshot; read by dashboard /api/live-sensors. LIVE VIEW ONLY — dispatch_log.jsonl/alert_feedback.csv/S3 remain the permanent record
   buffer_size: 600                 # rolling window: last 600 samples = 10 min at 1 Hz; oldest overwritten
-  sample_interval_seconds: 1.0     # matches the Arduino's 1 Hz stream (edge/sensors.py) — deliberately NOT per-frame at 30 FPS
+  sample_interval_seconds: 1.0     # matches the sensor board's 1 Hz stream — deliberately NOT per-frame. Since 2026-09-24 every sample also carries the board state and the thresholds in force at that second (edge/livelog.py), so the dashboard never draws another boot's thresholds
 
 location:
   latitude: 0.0                    # SET YOUR OWN — hardcoded coordinates, plan.md section 1 item 8 (GPS optional, will not lock indoors). Used for agent/locate.py's Overpass fire-station lookup.
@@ -70,3 +103,14 @@ aws:
   s3_bucket: "SET YOUR OWN"        # EXAMPLE was "firewatch-dispatch-arnav" — your S3 bucket name, must already exist (cloud/uploader.py does not create it)
   region: null                     # Phase 10: AWS_DEFAULT_REGION from .env is used if this is null; set here only to override
   max_uploads_per_session: 50      # Phase 10 cost-safety circuit breaker (info.md 2.1 spirit, developer zero-tolerance requirement): hard cap on S3 PutObject calls per running main.py session. CRITICAL incidents are rare and each uploads at most 2 objects (json+jpg), so 50 is far above any expected real session count — this is a deliberate breaker for an unforeseen bug, never expected to be hit in normal use. cloud/uploader.py logs a loud warning and stops uploading (not crashing) if it's ever reached.
+  # --- Phase 13g: cloud second opinion ------------------------------------
+  # ADVISORY ONLY. Nothing here may ever reach edge/fusion.py's fuse().
+  # Detection is "no model, no LLM, no network": a WAN outage, a throttled
+  # Lambda or an expired key must be incapable of downgrading the detector.
+  # With enabled: false, detection is byte-for-byte unchanged.
+  second_opinion:
+    enabled: false               # DEFAULT OFF. Turn on for trials/demos only — the safe default is the one that cannot bill
+    endpoint: "SET YOUR OWN"     # Lambda Function URL printed by scripts/deploy_lambda.py. AuthType=AWS_IAM, so requests are SigV4-signed; an unsigned POST gets 403
+    max_calls_per_session: 20    # process-lifetime circuit breaker and the PRIMARY cost guard (reserved concurrency may be unavailable on new accounts)
+    cooldown_seconds: 60         # minimum gap between calls; with rising-edge triggering, one sustained gas event = one call
+    timeout_seconds: 4.0         # fire-and-forget on a daemon thread, strictly after set_alarm(); allows for a ~1-3s Lambda cold start

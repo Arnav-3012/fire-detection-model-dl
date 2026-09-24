@@ -116,3 +116,28 @@ export function PercentIcon(props) {
     </svg>
   );
 }
+
+export function CameraIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1.6-2h7.4l1.6 2h2.2A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5Z" />
+      <circle cx="12" cy="13" r="3.4" />
+    </svg>
+  );
+}
+
+export function ExpandIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+    </svg>
+  );
+}
+
+export function PulseIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+    </svg>
+  );
+}

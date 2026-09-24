@@ -240,105 +240,17 @@ body {
   min-width: 0;
 }
 
-@media (max-width: 900px) {
-  .grid-12 { grid-template-columns: 1fr; }
-  .col-4, .col-5, .col-6, .col-7, .col-8, .col-12 { grid-column: 1 / -1; }
-}
-
-/* ---------------------------------------------------------------------
-   Hero status block — the one visual anchor on Overview that isn't
-   "another glass card": a large status ring plus the most-recent-event
-   detail, standing in for Vision UI's satisfaction-rate gauge.
---------------------------------------------------------------------- */
-
-.hero {
-  display: flex;
-  align-items: center;
-  gap: 28px;
-  padding: 26px 30px;
-  /* Soft radial glow behind the hero — the one spot on Overview that
-     should read as "richer than flat ash" without becoming a wash;
-     stays ember-amber (FireWatch palette, brand pivot 2026-09-04 — was
-     blue-cyan), never purple. */
-  box-shadow: 0 30px 90px -30px rgba(245, 158, 11, 0.35), 0 0 120px -50px rgba(220, 38, 38, 0.28);
-}
-
-.hero-ring {
-  position: relative;
-  width: 132px;
-  height: 132px;
-  flex-shrink: 0;
-}
-
-.hero-ring svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.hero-ring-track {
-  fill: none;
-  stroke: rgba(214, 180, 154, 0.14);
-  stroke-width: 10;
-}
-
-.hero-ring-value {
-  fill: none;
-  stroke-width: 10;
-  stroke-linecap: round;
-  transition: stroke-dasharray 500ms var(--ease), stroke 400ms var(--ease);
-}
-
-.hero-ring-label {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 2;
-}
-
-.hero-ring-label .value {
-  font-size: 1.7rem;
-  font-weight: 750;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-
-.hero-ring-label .caption {
-  font-size: 0.62rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--text-dim);
-  margin-top: 3px;
-}
-
-.hero-body {
+/* min-width: 0 so a Plotly chart or a nowrap row can never force its
+   track wider than the viewport (grid/flex items default to min-content). */
+.grid-12 > *,
+.tab-content > *,
+[role="tabpanel"] {
   min-width: 0;
-  flex: 1;
 }
 
-.hero-body h2 {
-  margin: 0 0 6px;
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: -0.005em;
-}
-
-.hero-body p {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 0.85rem;
-}
-
-.hero-body .hero-badges {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  flex-wrap: wrap;
+@media (max-width: 900px) {
+  .grid-12 { grid-template-columns: minmax(0, 1fr); }
+  .col-4, .col-5, .col-6, .col-7, .col-8, .col-12 { grid-column: 1 / -1; }
 }
 
 .metric-card {
@@ -583,7 +495,7 @@ body {
    reads as a distinct category from ember data cards without competing
    with the fusion-level status colors, which stay red/amber/green/yellow
    only. Steel-blue was already the "instrument reading" cool tone used
-   in LiveSensorChart, reused here for the same "not a hazard color"
+   in the gas chart, reused here for the same "not a hazard color"
    reason. */
 .glass--cool::before {
   background: linear-gradient(140deg, rgba(91, 143, 214, 0.55), rgba(157, 139, 214, 0.28) 45%, rgba(91, 143, 214, 0.1) 100%);
@@ -1163,39 +1075,7 @@ body {
   position: relative;
 }
 
-/* --- Stage 5: Live View tab (2026-09-23) --------------------------- */
-/* Two panels side by side on desktop, stacked on narrow screens. Chart
-   and camera each get half the width so neither is cramped. */
-.live-view {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-  align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .live-view {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* The MJPEG stream. object-fit: contain rather than cover so the full
-   frame is visible — this is a monitoring view, and cropping could hide
-   exactly the corner where something is burning. */
-.live-camera {
-  width: 100%;
-  max-height: 340px;
-  object-fit: contain;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.35);
-  display: block;
-}
-
 /* --- Stage 6d: cloud second opinion (2026-09-24) ------------------- */
-.second-opinion-panel {
-  grid-column: 1 / -1;
-}
-
 .opinion-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1248,4 +1128,636 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+/* =====================================================================
+   Live-first home page (2026-09-24): status strip, camera, right-now
+   readout, gas chart controls, fire-station card. Same ember-on-ash
+   tokens as everything above; level colours still appear ONLY where they
+   carry status (strip, camera alarm frame, zone marks).
+===================================================================== */
+
+/* Dense data panels: less blur so thin chart lines and small numbers keep
+   their contrast against the backdrop glow. */
+.glass--dense {
+  backdrop-filter: blur(12px) saturate(130%);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 40%),
+    rgba(22, 18, 16, 0.72);
+}
+
+/* Live surfaces must not jump on hover — the lift reads as instability
+   on something that updates every second. */
+.strip:hover,
+.camera:hover,
+.glass--dense:hover {
+  transform: none;
+}
+
+/* --- Status strip --------------------------------------------------- */
+.strip {
+  position: sticky;
+  top: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 14px 22px;
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--level-color) 16%, transparent), transparent 42%),
+    rgba(20, 16, 14, 0.78);
+  transition: background 400ms var(--ease), box-shadow 400ms var(--ease);
+}
+
+.strip--alarm {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--level-color) 42%, transparent), color-mix(in srgb, var(--level-color) 14%, transparent)),
+    rgba(20, 16, 14, 0.85);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--level-color) 60%, transparent),
+    0 18px 50px -18px var(--level-color);
+}
+
+.strip--critical {
+  animation: strip-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes strip-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--level-color) 60%, transparent), 0 18px 50px -18px var(--level-color); }
+  50% { box-shadow: 0 0 0 2px var(--level-color), 0 18px 70px -10px var(--level-color); }
+}
+
+.strip-level {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 230px;
+}
+
+.strip-level-name {
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.strip-level-text {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.strip--alarm .strip-level-text {
+  color: var(--text);
+}
+
+.strip-items {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin-left: auto;
+}
+
+.strip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.strip-label {
+  color: var(--text-dim);
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.strip-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.strip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.strip-value--ok { color: #2dd4a7; }
+.strip-value--pending { color: #e8c547; }
+.strip-value--trouble { color: #9d8bd6; }
+.strip-value--alarm { color: #f0453a; }
+.strip-value--neutral { color: var(--text); }
+.strip-value--neutral .strip-dot { background: var(--text-dim); box-shadow: none; }
+
+@media (max-width: 900px) {
+  .strip { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .strip-items { margin-left: 0; }
+}
+
+/* --- Camera ----------------------------------------------------------- */
+.camera {
+  padding: 8px;
+  border-radius: var(--radius-lg);
+}
+
+.camera--alarm {
+  box-shadow: 0 0 0 2px var(--alarm-color), 0 0 60px -12px var(--alarm-color);
+}
+
+.camera-stage {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-height: 560px;
+  width: 100%;
+  border-radius: calc(var(--radius-lg) - 8px);
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #1c1714, #080706 75%);
+}
+
+/* contain, not cover: cropping could hide exactly the corner that is
+   burning. */
+.camera-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.camera-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.camera-veil--stale {
+  background: rgba(8, 7, 6, 0.62);
+  backdrop-filter: grayscale(1) blur(2px);
+  -webkit-backdrop-filter: grayscale(1) blur(2px);
+}
+
+.camera-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  pointer-events: none;
+}
+
+.camera-overlay > * { pointer-events: auto; }
+
+.camera-overlay--top {
+  top: 0;
+  justify-content: space-between;
+  background: linear-gradient(180deg, rgba(8, 7, 6, 0.7), transparent);
+}
+
+.camera-overlay--bottom {
+  bottom: 0;
+  background: linear-gradient(0deg, rgba(8, 7, 6, 0.8), transparent);
+}
+
+.camera-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(8, 7, 6, 0.6);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.camera-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.camera-live--live { color: #f0453a; }
+.camera-live--live .camera-live-dot { animation: live-blink 1.4s ease-in-out infinite; }
+.camera-live--stale,
+.camera-live--offline { color: #e8c547; }
+.camera-live--connecting,
+.camera-live--unconfigured { color: var(--text-dim); }
+
+@keyframes live-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(240, 69, 58, 0.6); }
+  50% { opacity: 0.45; box-shadow: 0 0 0 6px rgba(240, 69, 58, 0); }
+}
+
+.camera-meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  max-width: 320px;
+}
+
+.camera-meter-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.camera-meter-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(214, 180, 154, 0.18);
+  overflow: hidden;
+}
+
+.camera-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #f0453a);
+  transition: width 600ms var(--ease);
+}
+
+.camera-meter-value,
+.camera-clock {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.camera-clock {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.camera-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 7, 6, 0.55);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 200ms var(--ease);
+}
+
+.camera-btn:hover { background: rgba(245, 158, 11, 0.2); }
+
+.camera-btn:focus-visible,
+.segmented-btn:focus-visible,
+.station-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px rgba(245, 158, 11, 0.65);
+}
+
+.camera:fullscreen {
+  padding: 0;
+  border-radius: 0;
+  background: #000;
+}
+
+.camera:fullscreen .camera-stage {
+  max-height: none;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+/* --- Right-now readout ------------------------------------------------ */
+.readout {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.readout .panel-title { margin-bottom: 0; }
+
+.bullet,
+.spark {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.spark {
+  flex: 1;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.bullet-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bullet-name {
+  display: block;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.bullet-gas {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  margin-top: 2px;
+}
+
+.bullet-value {
+  font-family: var(--font-display);
+  font-size: 2.2rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transition: color 400ms var(--ease);
+}
+
+.bullet-unit {
+  font-family: system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  margin-left: 5px;
+  letter-spacing: 0.06em;
+}
+
+.bullet-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(214, 180, 154, 0.12);
+}
+
+.bullet-track--pending {
+  background: repeating-linear-gradient(135deg, rgba(214, 180, 154, 0.1) 0 6px, transparent 6px 12px);
+}
+
+.bullet-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.bullet-zone--warn { background: rgba(240, 149, 74, 0.45); }
+.bullet-zone--danger { background: rgba(240, 69, 58, 0.55); border-radius: 0 999px 999px 0; }
+
+.bullet-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-dim);
+  border-radius: 1px;
+}
+
+.bullet-marker {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: var(--marker-color);
+  border: 3px solid #0d0b0a;
+  box-shadow: 0 0 0 1px var(--marker-color), 0 0 14px var(--marker-color);
+  transition: left 700ms var(--ease), background 400ms var(--ease);
+}
+
+.bullet--danger .bullet-marker {
+  animation: marker-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes marker-pulse {
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--marker-color) 30%, transparent), 0 0 22px var(--marker-color); }
+}
+
+.bullet-foot {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fixed 64px basis; grows only when the desktop row gives the readout
+   spare height beside the camera. */
+.spark-svg {
+  width: 100%;
+  flex: 1 1 64px;
+  height: 64px;
+  min-height: 64px;
+  display: block;
+}
+
+/* --- Gas chart header / controls ------------------------------------- */
+.gas-header {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.gas-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 12px;
+  background: rgba(8, 7, 6, 0.5);
+  border: 1px solid var(--border);
+}
+
+.segmented-btn {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  padding: 6px 12px;
+  border-radius: 9px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 200ms var(--ease), background 200ms var(--ease);
+}
+
+.segmented-btn:hover { color: var(--text); }
+
+.segmented-btn--active {
+  color: #0d0b0a;
+  background: linear-gradient(135deg, #f7b545, var(--accent));
+  box-shadow: 0 4px 14px -6px rgba(245, 158, 11, 0.8);
+}
+
+.gas-subbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 6px;
+}
+
+.gas-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.chart-legend-item--muted { color: var(--text-dim); }
+
+.chart-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.chip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chip--ok { color: #2dd4a7; background: rgba(45, 212, 167, 0.12); }
+.chip--pending { color: #e8c547; background: rgba(232, 197, 71, 0.12); }
+.chip--trouble { color: #b3a5e6; background: rgba(157, 139, 214, 0.14); }
+
+/* --- Section heading + fire station --------------------------------- */
+.section-heading {
+  margin: 14px 0 -6px;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.section-heading::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border), transparent);
+}
+
+.station-name {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  margin-bottom: 14px;
+}
+
+.station-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 24px;
+}
+
+.station-stat {
+  font-size: 1.6rem;
+  font-weight: 800;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.station-stat--sm {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.station-stat a,
+.station-link {
+  color: #7fa8e0;
+  text-decoration: none;
+}
+
+.station-link {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.station-link:hover,
+.station-stat a:hover { text-decoration: underline; }
+
+.station-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.station-numbers b { color: var(--text); font-size: 0.95rem; }
+.station-note { width: 100%; font-size: 0.7rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .strip--critical,
+  .camera-live--live .camera-live-dot,
+  .bullet--danger .bullet-marker {
+    animation: none;
+  }
+  .bullet-marker,
+  .camera-meter-fill,
+  .strip {
+    transition: none;
+  }
 }

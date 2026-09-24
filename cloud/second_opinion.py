@@ -68,9 +68,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def sidecar_path(live_log_path: str | Path) -> Path:
-    """Where opinions are published: beside the live log, same convention
-    as edge/main.py's _thresholds.json. One definition, used by both the
-    writer here and dashboard/backend/main.py's reader."""
+    """Where opinions are published: beside the live log. One definition,
+    used by both the writer here and dashboard/backend/main.py's reader."""
     p = Path(live_log_path)
     return p.with_name(p.stem + "_second_opinion.json")
 
