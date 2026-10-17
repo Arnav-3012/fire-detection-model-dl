@@ -52,3 +52,4 @@ arduino/*/secrets.h
 
 # codebase wiki (generated teaching docs, local-only)
 docs/wiki/
+explanation/
