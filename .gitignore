@@ -49,3 +49,6 @@ graphify-out/.graphify_incremental.json
 # WiFi credentials for the ESP32 sketches — local only, never committed.
 # secrets.example.h IS tracked as the template; secrets.h is not.
 arduino/*/secrets.h
+
+# codebase wiki (generated teaching docs, local-only)
+docs/wiki/

@@ -2,6 +2,31 @@
 
 IoT fire and gas hazard detection with local edge inference and agentic response.
 
+## Results at a glance
+
+Production vision model: MobileNetV3-Small **v4**, evaluated on a leak-free
+validation split of 3,296 images (neutral 1,522 / smoke 880 / fire 894;
+train 18,678).
+
+| Metric | Result | Target |
+|---|---|---|
+| **Fire recall** (threshold 0.30) | **95.75%** | ≥ 95% |
+| Fire precision (threshold 0.30) | 86.64% | ≥ 80% |
+| **Smoke recall** (0.45, argmax-AND) | **85.11%** | ≥ 85% |
+| Validation accuracy | 91.29% | ≥ 85% |
+| Macro F1 | 90.65% | ≥ 85% |
+| Live end-to-end trials | **11 / 12 passed** (6 hazard + 6 non-hazard) | n/a |
+| Bright-wall smoke false-positive rate | 98.0% → **0.0%** (v3 → v4) | n/a |
+| Local inference latency | ~23 ms warm | n/a |
+| Local vs AWS Lambda `p_fire` | bit-identical (worst deviation 3e-06) | n/a |
+
+Honest caveats: the fire-recall margin is only 0.75 pts and smoke recall
+clears its bar by 0.11 pts (the 0.92 stretch target is not met). One live
+trial failed: total darkness produced a false WARNING. TV/laptop fire
+footage still raises alarms (6 on the standard clip), capped at WARNING by
+fusion. Training data includes people in frame. Details in
+[Evaluation](#evaluation) and [Known limitations](#known-limitations).
+
 A laptop-hosted edge node detects fire or smoke from an ESP32-CAM video
 stream, cross-checks it against an ESP32 gas-sensor board (both over WiFi),
 and produces a verified alert that reaches a real phone — with the internet
