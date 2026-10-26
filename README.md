@@ -1,12 +1,24 @@
 # FireWatch
 
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](requirements.txt)
+[![PyTorch](https://img.shields.io/badge/PyTorch-MobileNetV3--Small-EE4C2C?logo=pytorch&logoColor=white)](train/train_classifier.py)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-edge_inference-005CED?logo=onnx&logoColor=white)](train/export_onnx.py)
+[![LangGraph](https://img.shields.io/badge/LangGraph-agent_workflow-1C3C3C)](agent/graph.py)
+[![ESP32](https://img.shields.io/badge/ESP32-sensor_and_camera-E7352C?logo=espressif&logoColor=white)](arduino/)
+![Codebase wiki](https://img.shields.io/badge/docs-codebase_wiki_(local)-blue)
+[![Status](https://img.shields.io/badge/status-prototype-orange)](#known-limitations)
+
 IoT fire and gas hazard detection with local edge inference and agentic response.
 
 ## Results at a glance
 
-Production vision model: MobileNetV3-Small **v4**, evaluated on a leak-free
-validation split of 3,296 images (neutral 1,522 / smoke 880 / fire 894;
-train 18,678).
+Production vision model: MobileNetV3-Small **v4**, evaluated on a validation
+split of 3,296 images (neutral 1,522 / smoke 880 / fire 894; train 18,678).
+The split is checked for byte-identical duplicates across train and
+validation (`train/check_leakage.py`), but not for near-duplicates or frames
+from the same video. The same split chose the checkpoint and the threshold,
+so these numbers are optimistic. **There is no held-out test set yet** (see
+[Test set](#test-set) under Evaluation).
 
 | Metric | Result | Target |
 |---|---|---|
@@ -364,8 +376,10 @@ look.
 ## Evaluation
 
 Adversarial false-positive testing against five self-recorded 30-second
-clips plus a held-out scenario clip (videos are gitignored — up to ~290MB
-each, over GitHub's file-size limit; re-record locally to reproduce):
+clips plus a bright-wall webcam clip (videos are gitignored — up to ~290MB
+each, over GitHub's file-size limit; re-record locally to reproduce). The
+bright-wall clip was not used for training, but its result was part of the
+v4 promotion decision, so it is not a clean test (see Test set below):
 
 | Scenario | Block bar | v4 result |
 |---|---|---|
@@ -387,6 +401,33 @@ reported passing; the per-run counts are recorded in `logs.md` once logged.
 
 `eval/results.csv` is the single source of truth for hazard/non-hazard trial
 outcomes and latency — nothing in a report is typed by hand.
+
+### Test set
+
+There is no held-out labelled test set in the repository. Every number above
+on the validation split, and the clips used for the v4 decision, have been seen
+by a selection step. To get an honest estimate:
+
+1. Collect fresh images that are **not** used for training, selection or
+   threshold choice. Include sub-categories you care about (for example
+   `matchstick_flame`, `lighter_flame`, `gas_stove_flame`), and record clips
+   in a different room or at a different time than the training data.
+2. Put them in `data/test/fire/<category>/`, `data/test/neutral/<category>/`
+   and `data/test/smoke/<category>/`.
+3. Run the test once for each model version, and do not tune on its result:
+
+   ```bash
+   python eval/test_set_eval.py --model-path models/fire_mnv3.onnx
+   ```
+
+   It prints fire recall overall and per sub-category, fire false alarms,
+   precision, and smoke recall, and writes `eval/test_set_results.csv`. It
+   scores single frames with the same rules as the edge loop, without the
+   temporal voter. The live system is therefore stricter than this number.
+
+Matchstick flames are the small-flame case most at risk. The matchstick
+training images are few (23 in v3, in training, not a test), and the one
+live check was a single session with one matchstick.
 
 ---
 
@@ -487,6 +528,20 @@ and measured local-vs-cloud agreement are in `logs.md` Phase 13g.
   never affects detection — it just shows no opinion.
 - **GPS is not implemented** — coordinates in `config.yaml` are hardcoded,
   by design (a GPS module will not lock indoors, per `plan.md` section 1).
+- **No held-out test set.** The validation split chose the checkpoint and the
+  threshold and also reports the results, so the headline numbers are
+  optimistic. The fire-recall margin over 0.95 (0.0075) is smaller than its
+  sampling error (about ±0.013 at 894 fires). See [Test set](#test-set).
+- **Small, distant flames and matchstick flames.** A sustained matchstick held
+  close was measured to alarm in one live session, and a brief flicker was
+  not. That is one session with one matchstick, not a measured recall. The
+  scraped small-flame data had 23 matchstick images in v3 training and is
+  thin.
+- **The sensor ingest has no authentication.** Any device on the LAN that can
+  reach port 8002 can POST a gas state, including `GAS_HIGH`, which with a
+  vision smoke event reaches CRITICAL. Authenticate the board before relying
+  on this link in an uncontrolled network.
+- **The dashboard and camera endpoints have no authentication** on port 8001.
 
 See `logs.md`'s "Open items" sections and `context.md` section 7 for the
 complete, current list — this section only covers the ones a user of the
