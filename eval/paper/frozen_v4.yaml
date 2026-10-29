@@ -1,0 +1,48 @@
+# FROZEN SYSTEM for the paper's test sessions (research-steps.md section 2).
+# Commit this file BEFORE the first S-session. After that, nothing in
+# "frozen" changes. Anything listed under "declared_amendments" may change,
+# and must be reported in the paper as a change made after the freeze.
+
+frozen_on: "2026-10-29"
+code_commit: "10c7bfa2af891e10eae6684d9857b696116033c8"
+
+model:
+  production_path: models/fire_mnv3.onnx
+  v4_path: models/fire_mnv3_v4.onnx
+  # production and v4 are byte-identical (checked 2026-10-29)
+  onnx_sha256: 3c668ef48b383aba146cfdfda2b1ec35839211c387bd754a5b26621969bdb8a5
+  onnx_data_sha256: 9bc492e509a7127049e63846f8fb292d3657ec890eaaa29de02330c98cc7a99f
+  checkpoint_pt: models/fire_mnv3_v4.pt   # Grad-CAM only
+  checkpoint_pt_sha256: bf3f393731e3596b70da83f0cf1956bd25b25e5283fed80d6b967e4b33006d66
+
+decision_rule:           # values copied from config.yaml, not chosen on test data
+  fire_decision_threshold: 0.30
+  smoke_decision_threshold: 0.45    # argmax-AND rule
+  frame_threshold_tau: 0.70         # temporal voter per-frame gate
+  window: 8
+  votes_needed: 3                   # fire
+  smoke_votes_needed: 5
+
+fusion:
+  table: edge/fusion.py             # rule 2 (temperature) can never fire: temp_spiking() is a stub
+  vision_only_fire_cap: WARNING
+  critical_requires: "(vision fire or smoke) AND board GAS_HIGH"
+
+firmware:
+  sensor_node: arduino/sensor_esp32_node   # gas logic frozen; HMAC signing added later is a non-detection amendment
+  cam_node: arduino/cam_node
+  camera_resolution: QVGA 320x240          # FRAMESIZE_QVGA in cam_node.ino
+
+declared_amendments:
+  # None of these 4 change what the detector decides; the 5th does.
+  - sensor ingest HMAC authentication          # non-detection
+  - camera mDNS hostname                       # non-detection
+  - dashboard bound to 127.0.0.1               # non-detection
+  - notification escalation bypass in edge/main.py   # notification only, already in the freeze commit
+  - darkness gate                              # CHANGES vision output. Thresholds chosen on T00 clips only.
+                                               # Report the darkness category with and without the gate.
+
+rules:
+  - No change to anything under model, decision_rule, fusion or the gas firmware logic after S01.
+  - Test sessions are named S01..; development/dry-run sessions are named T00, T01.. and never enter the results.
+  - Nothing is tuned on S-session data. Post-hoc analysis is labelled post-hoc.
