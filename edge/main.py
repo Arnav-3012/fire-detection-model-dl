@@ -237,6 +237,9 @@ def main() -> None:
     alarm_on = False
     # Seeded so the first WARNING+ frame notifies immediately.
     last_notify = time.monotonic() - notify_cooldown
+    # Severity of the last notification: an upgrade (WARNING -> CRITICAL)
+    # bypasses the cooldown, so CRITICAL is never swallowed by a WARNING.
+    last_notify_level = Level.SAFE
     gate_announced = False
     gate_cleared_announced = False
     # Latches the once-only "no STATE field" fallback warning below.
@@ -367,10 +370,13 @@ def main() -> None:
             # --- 3. network step (Phase 8) — strictly after set_alarm ----
             # Cooldown applies ONLY here: the buzzer above has none. One
             # sustained fire = one agent notification per 60s, not 30/s.
+            # Escalating past the last notified level skips the cooldown.
             if level >= Level.WARNING and (
                 time.monotonic() - last_notify >= notify_cooldown
+                or level > last_notify_level
             ):
                 last_notify = time.monotonic()
+                last_notify_level = level
                 notify_agent(
                     agent_url, level, reason, result, readings, gas_high, gated, frame
                 )
